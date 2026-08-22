@@ -1,0 +1,38 @@
+{
+  "name": "ctxpack",
+  "version": "1.0.0",
+  "description": "Universal context continuity & handoff engine for AI-assisted development",
+  "bin": {
+    "ctxpack": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "test": "node --test dist/test/*.test.js || ts-node test/composer.test.ts",
+    "build": "tsc",
+    "dev": "ts-node src/cli.ts",
+    "start": "node dist/cli.js"
+  },
+  "keywords": [
+    "ai",
+    "context",
+    "llm",
+    "chatgpt",
+    "claude",
+    "gemini",
+    "handoff",
+    "developer-tools"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "clipboardy": "^5.3.2",
+    "commander": "^15.0.0",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^7.0.2"
+  }
+}
