@@ -16,7 +16,7 @@ function getNextAdrId(decisionsDir: string): string {
     }
     const next = maxNum + 1;
     if (next > 9999) {
-        throw new Error('Limite de ADR IDs atingido (DEC-9999).');
+        throw new Error('ADR ID limit reached (DEC-9999).');
     }
     return `DEC-${next.toString().padStart(3, '0')}`;
 }
@@ -27,7 +27,7 @@ function assertInsideDirectory(parentDir: string, targetPath: string, entityName
     const relative = path.relative(resolvedParent, resolvedTarget);
 
     if (relative.startsWith('..') || path.isAbsolute(relative) || relative === '') {
-        throw new Error(`Violação de segurança (Path Traversal): Tentativa de acesso fora de ${parentDir} para ${entityName}`);
+        throw new Error(`Security violation (Path Traversal): Attempted access outside ${parentDir} for ${entityName}`);
     }
 
     // Validação de realpath contra symlinks em diretórios pai (Task 4)
@@ -39,12 +39,12 @@ function assertInsideDirectory(parentDir: string, targetPath: string, entityName
                 const realTargetParent = fs.realpathSync.native ? fs.realpathSync.native(targetParent) : fs.realpathSync(targetParent);
                 const relReal = path.relative(realParent, realTargetParent);
                 if (relReal.startsWith('..') || path.isAbsolute(relReal)) {
-                    throw new Error(`Violação de segurança (Symlink Jail): ${entityName} escapa do diretório canônico real.`);
+                    throw new Error(`Security violation (Symlink Jail): ${entityName} escapes the canonical directory.`);
                 }
             }
         }
     } catch (err: any) {
-        if (err.message.includes('Violação de segurança')) throw err;
+        if (err.message.includes('Security violation')) throw err;
     }
 }
 
@@ -59,7 +59,7 @@ export function buildMutationPlan(
     const historyFile = path.join(contextDir, '.pactx-history.json');
 
     if (!fs.existsSync(contextDir)) {
-        throw new Error('Pasta .ai-context não encontrada no projeto.');
+        throw new Error('.ai-context folder not found in project.');
     }
 
     const warnings = [...initialWarnings];
@@ -68,7 +68,7 @@ export function buildMutationPlan(
     if (payload.base_revision) {
         const currentRev = getCurrentContextRevision(contextDir);
         if (payload.base_revision !== currentRev) {
-            warnings.push(`Stale Context: O update foi baseado na revisão "${payload.base_revision}", mas o repositório atual está na revisão "${currentRev}".`);
+            warnings.push(`Stale Context: The update was based on revision "${payload.base_revision}", but the current repository is at revision "${currentRev}".`);
         }
     }
 
@@ -81,7 +81,7 @@ export function buildMutationPlan(
                 isAlreadyApplied = true;
             }
         } catch (err: any) {
-            throw new Error(`Falha de integridade: O arquivo de histórico .pactx-history.json está corrompido ou contém JSON inválido (${err.message}). Operação abortada.`);
+            throw new Error(`Integrity failure: The history ledger .pactx-history.json is corrupted or contains invalid JSON (${err.message}). Operation aborted.`);
         }
     }
 
@@ -124,17 +124,17 @@ export function buildMutationPlan(
                     currentNextNum++;
                 }
                 if (currentNextNum > 9999) {
-                    throw new Error('Limite de ADR IDs atingido (DEC-9999).');
+                    throw new Error('ADR ID limit reached (DEC-9999).');
                 }
                 adrId = `DEC-${currentNextNum.toString().padStart(3, '0')}`;
             } else {
                 if (allocatedIds.has(adrId)) {
-                    throw new Error(`Conflito: A decisão ${adrId} foi declarada mais de uma vez no mesmo lote.`);
+                    throw new Error(`Conflict: Decision ${adrId} was declared more than once in the same batch.`);
                 }
                 // ID explícito: verifica se já existe para evitar sobrescrita acidental
                 const existingPath = path.resolve(decisionsDir, `${adrId}.md`);
                 if (fs.existsSync(existingPath)) {
-                    throw new Error(`Conflito: A decisão ${adrId} já existe no repositório.`);
+                    throw new Error(`Conflict: Decision ${adrId} already exists in the repository.`);
                 }
             }
 
@@ -145,7 +145,7 @@ export function buildMutationPlan(
             plan.operations.createdAdrs.push({
                 id: adrId,
                 targetPath,
-                title: d.title || 'Decisão sem título',
+                title: d.title || 'Untitled Decision',
                 reason: d.reason || '',
                 decision: d.decision || '',
                 date: today,
@@ -158,7 +158,7 @@ export function buildMutationPlan(
         for (const s of payload.superseded_decisions) {
             // Conflito Intra-Lote: Impede que um ADR seja criado e substituído no mesmo lote (P2-07)
             if (allocatedIds.has(s.id)) {
-                throw new Error(`Conflito lógico: ${s.id} está sendo criado e marcado como superseded simultaneamente no mesmo lote.`);
+                throw new Error(`Logical conflict: ${s.id} is being created and marked as superseded simultaneously in the same batch.`);
             }
 
             const targetPath = path.resolve(decisionsDir, `${s.id}.md`);
@@ -166,7 +166,7 @@ export function buildMutationPlan(
 
             // Validação Semântica: O ADR a ser substituído PRECISA existir
             if (!fs.existsSync(targetPath)) {
-                throw new Error(`Decisão para substituição não encontrada no repositório: ${s.id}`);
+                throw new Error(`Decision to supersede not found in repository: ${s.id}`);
             }
 
             let supersededBy = s.by || 'auto';
@@ -174,9 +174,9 @@ export function buildMutationPlan(
                 if (plan.operations.createdAdrs.length === 1) {
                     supersededBy = plan.operations.createdAdrs[0].id;
                 } else if (plan.operations.createdAdrs.length > 1) {
-                    throw new Error(`Ambiguidade em superseded_decisions: 'by: auto' não pode ser resolvido pois foram criados ${plan.operations.createdAdrs.length} novos ADRs neste lote. Especifique o ID explicitamente.`);
+                    throw new Error(`Ambiguity in superseded_decisions: 'by: auto' cannot be resolved because ${plan.operations.createdAdrs.length} new ADRs were created in this batch. Specify the ID explicitly.`);
                 } else {
-                    throw new Error(`superseded_decisions definiu 'by: auto', mas nenhum novo ADR foi criado no lote.`);
+                    throw new Error(`superseded_decisions specified 'by: auto', but no new ADR was created in this batch.`);
                 }
             }
 

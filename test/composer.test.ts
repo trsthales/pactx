@@ -15,8 +15,8 @@ test('initProject e composeContext workflow', () => {
         assert.strictEqual(fs.existsSync(path.join(tmpDir, '.ai-context', 'state.md')), true);
 
         const output = composeContext(tmpDir);
-        assert.match(output, /PROJETO & INVARIANTES/);
-        assert.match(output, /ESTADO ATUAL & PRÓXIMA TAREFA/);
+        assert.match(output, /PROJECT & INVARIANTS/);
+        assert.match(output, /CURRENT STATE & ACTIVE TASK/);
         assert.match(output, /DEC-001/);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -16,7 +16,7 @@ export function safeAtomicWriteFileSync(
     try {
         const stat = fs.lstatSync(filePath);
         if (stat.isSymbolicLink()) {
-            throw new Error(`Violação de segurança: "${filePath}" é um link simbólico. Escrita recusada.`);
+            throw new Error(`Security violation: "${filePath}" is a symbolic link. Write rejected.`);
         }
         if (stat.isFile() && stat.nlink > 1) {
             fs.unlinkSync(filePath);
@@ -143,7 +143,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             const frontmatterYaml = yaml.stringify(frontmatter).trim();
             const sanitizedDecision = sanitizeBodyField(adr.decision);
             const sanitizedReason = sanitizeBodyField(adr.reason);
-            const body = `# Decisão\n${sanitizedDecision}\n\n# Motivo\n${sanitizedReason}\n`;
+            const body = `# Decision\n${sanitizedDecision}\n\n# Reason\n${sanitizedReason}\n`;
             const fullContent = `---\n${frontmatterYaml}\n---\n\n${body}`;
 
             safeAtomicWriteFileSync(adr.targetPath, fullContent, 'utf-8');
@@ -173,7 +173,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
                     const newContent = `---\n${newFrontmatter}\n---\n${match[2]}`;
                     safeAtomicWriteFileSync(adr.targetPath, newContent, 'utf-8');
                 } else {
-                    throw new Error(`Estrutura de frontmatter inválida ou corrompida no ADR: ${adr.targetPath}`);
+                    throw new Error(`Invalid or corrupted frontmatter structure in ADR: ${adr.targetPath}`);
                 }
             }
         }
@@ -223,15 +223,15 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
                     const isHeading = /^#+\s/.test(line.trim());
                     if (isHeading) {
                         const sectionLine = line.replace(/^#+\s*/, '').replace(/^[^\p{L}\p{N}]+/u, '').trim().toLowerCase();
-                        if (sectionLine.startsWith('objetivo atual')) {
+                        if (sectionLine.startsWith('current goal') || sectionLine.startsWith('objetivo atual') || sectionLine.startsWith('goal') || sectionLine.startsWith('objetivo')) {
                             currentSection = 'objective';
-                        } else if (sectionLine.startsWith('o que foi feito')) {
+                        } else if (sectionLine.startsWith('recently completed') || sectionLine.startsWith('o que foi feito') || sectionLine.startsWith('completed')) {
                             currentSection = 'completed';
-                        } else if (sectionLine.startsWith('hipóteses descartadas') || sectionLine.startsWith('hipoteses descartadas')) {
+                        } else if (sectionLine.startsWith('rejected hypotheses') || sectionLine.startsWith('hipóteses descartadas') || sectionLine.startsWith('hipoteses descartadas') || sectionLine.startsWith('hypotheses')) {
                             currentSection = 'hypotheses';
-                        } else if (sectionLine.startsWith('fatos')) {
+                        } else if (sectionLine.startsWith('facts') || sectionLine.startsWith('fatos')) {
                             currentSection = 'facts';
-                        } else if (sectionLine.startsWith('próxima ação imediata') || sectionLine.startsWith('proxima acao imediata')) {
+                        } else if (sectionLine.startsWith('immediate next action') || sectionLine.startsWith('next action') || sectionLine.startsWith('próxima ação imediata') || sectionLine.startsWith('proxima acao imediata') || sectionLine.startsWith('proxima acao')) {
                             currentSection = 'next_action';
                         } else {
                             // Seção customizada do usuário (P1-01)
@@ -318,20 +318,20 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
             const stateFrontmatter = yaml.stringify(frontmatter).trim();
 
-            let stateBody = `# Objetivo Atual\n${finalActiveTask || '(Definir objetivo)'}\n\n`;
+            let stateBody = `# Current Goal\n${finalActiveTask || '(Define goal)'}\n\n`;
 
-            stateBody += `# O que foi feito recentemente\n`;
-            stateBody += finalCompleted.length > 0 ? finalCompleted.map(c => `- [x] ${c}`).join('\n') + '\n\n' : `- (Nenhum item)\n\n`;
+            stateBody += `# Recently Completed\n`;
+            stateBody += finalCompleted.length > 0 ? finalCompleted.map(c => `- [x] ${c}`).join('\n') + '\n\n' : `- (No items)\n\n`;
 
             if (finalFacts.length > 0) {
-                stateBody += `# Fatos & Descobertas\n`;
+                stateBody += `# Facts & Discoveries\n`;
                 stateBody += finalFacts.map(f => `- ${f}`).join('\n') + '\n\n';
             }
 
-            stateBody += `# Hipóteses Descartadas / Erros Conhecidos (NÃO REPETIR)\n`;
-            stateBody += finalHypotheses.length > 0 ? finalHypotheses.map(h => `- ${h}`).join('\n') + '\n\n' : `- (Nenhuma)\n\n`;
+            stateBody += `# Rejected Hypotheses / Known Errors (DO NOT RETRY)\n`;
+            stateBody += finalHypotheses.length > 0 ? finalHypotheses.map(h => `- ${h}`).join('\n') + '\n\n' : `- (None)\n\n`;
 
-            stateBody += `# Próxima Ação Imediata\n${finalNextAction || '(Definir próxima ação)'}\n`;
+            stateBody += `# Immediate Next Action\n${finalNextAction || '(Define next action)'}\n`;
 
             // Re-anexa seções customizadas do usuário (P1-01)
             for (const custom of customSections) {
@@ -347,7 +347,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             const glossaryPath = path.join(contextDir, 'glossary.md');
             recordSnapshot(glossaryPath);
 
-            let content = fs.existsSync(glossaryPath) ? fs.readFileSync(glossaryPath, 'utf-8').trim() : '# Glossário & Contratos';
+            let content = fs.existsSync(glossaryPath) ? fs.readFileSync(glossaryPath, 'utf-8').trim() : '# Glossary & Contracts';
             for (const term of plan.operations.appendedGlossaryTerms) {
                 const cleanTermName = term.term.replace(/[\r\n]+/g, ' ').trim();
                 const normalizedTerm = sanitizeBodyField(cleanTermName);
@@ -366,7 +366,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             try {
                 ledger = JSON.parse(fs.readFileSync(historyFile, 'utf-8'));
             } catch (err: any) {
-                throw new Error(`Falha de integridade: O arquivo de histórico .pactx-history.json está corrompido (${err.message}). Operação abortada.`);
+                throw new Error(`Integrity failure: The history ledger .pactx-history.json is corrupted (${err.message}). Operation aborted.`);
             }
         }
 
@@ -393,7 +393,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
     } catch (error: any) {
         // FAIL-CLOSED: Rollback Transacional Instantâneo
         rollback();
-        throw new Error(`Falha transacional durante a escrita. Rollback executado com sucesso. Causa: ${error.message}`);
+        throw new Error(`Transactional failure during write. Rollback executed successfully. Cause: ${error.message}`);
     } finally {
         isApplying = false;
         process.removeListener('SIGINT', handleSignal);
