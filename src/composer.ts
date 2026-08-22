@@ -27,6 +27,7 @@ export function getCurrentContextRevision(contextDir: string): string {
 
     const projectContent = readFileSafe('project.md');
     const stateContent = readFileSafe('state.md');
+    const glossaryContent = readFileSafe('glossary.md');
     const decisionsDir = path.join(contextDir, 'decisions');
     const decisions: string[] = [];
 
@@ -37,8 +38,8 @@ export function getCurrentContextRevision(contextDir: string): string {
         }
     }
 
-    const rawStateBlob = projectContent + stateContent + decisions.join('');
-    return crypto.createHash('sha256').update(rawStateBlob).digest('hex').substring(0, 6);
+    const rawStateBlob = projectContent + stateContent + glossaryContent + decisions.join('');
+    return crypto.createHash('sha256').update(rawStateBlob).digest('hex').substring(0, 16);
 }
 
 export function composeContext(cwd: string = process.cwd(), options: PackOptions = {}): string {
@@ -50,7 +51,7 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
 
     const readFileSafe = (relPath: string) => {
         const full = path.join(contextDir, relPath);
-        return fs.existsSync(full) ? fs.readFileSync(full, 'utf-8').trim() : '';
+        return fs.existsSync(full) ? fs.readFileSync(full, 'utf-8').replace(/\r\n?/g, '\n').trim() : '';
     };
 
     const projectContent = readFileSafe('project.md');
@@ -64,7 +65,7 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
     if (fs.existsSync(decisionsDir)) {
         const files = (fs.readdirSync(decisionsDir) as string[]).filter(f => f.endsWith('.md'));
         for (const f of files) {
-            const content = fs.readFileSync(path.join(decisionsDir, f), 'utf-8').trim();
+            const content = fs.readFileSync(path.join(decisionsDir, f), 'utf-8').replace(/\r\n?/g, '\n').trim();
             const status = parseFrontmatterValue(content, 'status') || 'active';
             const id = parseFrontmatterValue(content, 'id') || f.replace('.md', '');
             const title = parseFrontmatterValue(content, 'title') || 'Decisão sem título';

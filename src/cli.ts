@@ -15,7 +15,7 @@ const program = new Command();
 program
     .name('pactx')
     .description('Universal context continuity & handoff engine for AI-assisted development')
-    .version('0.2.0');
+    .version('0.2.1');
 
 program
     .command('init')
@@ -156,6 +156,7 @@ program
                 return;
             }
 
+            plan.isForced = !!options.force;
             applyMutationPlan(process.cwd(), plan);
             console.log(pc.green('\n✔ Estado canônico atualizado com sucesso!'));
             console.log(pc.dim('📋 Ledger de auditoria gravado em .ai-context/.pactx-history.json\n'));

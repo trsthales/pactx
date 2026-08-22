@@ -29,6 +29,23 @@ function assertInsideDirectory(parentDir: string, targetPath: string, entityName
     if (relative.startsWith('..') || path.isAbsolute(relative) || relative === '') {
         throw new Error(`Violação de segurança (Path Traversal): Tentativa de acesso fora de ${parentDir} para ${entityName}`);
     }
+
+    // Validação de realpath contra symlinks em diretórios pai (Task 4)
+    try {
+        if (fs.existsSync(resolvedParent)) {
+            const realParent = fs.realpathSync.native ? fs.realpathSync.native(resolvedParent) : fs.realpathSync(resolvedParent);
+            const targetParent = path.dirname(resolvedTarget);
+            if (fs.existsSync(targetParent)) {
+                const realTargetParent = fs.realpathSync.native ? fs.realpathSync.native(targetParent) : fs.realpathSync(targetParent);
+                const relReal = path.relative(realParent, realTargetParent);
+                if (relReal.startsWith('..') || path.isAbsolute(relReal)) {
+                    throw new Error(`Violação de segurança (Symlink Jail): ${entityName} escapa do diretório canônico real.`);
+                }
+            }
+        }
+    } catch (err: any) {
+        if (err.message.includes('Violação de segurança')) throw err;
+    }
 }
 
 export function buildMutationPlan(
@@ -55,7 +72,7 @@ export function buildMutationPlan(
         }
     }
 
-    // 2. Verificação de Idempotência no Ledger
+    // 2. Verificação de Idempotência no Ledger (Fail-Closed se corrompido)
     let isAlreadyApplied = false;
     if (fs.existsSync(historyFile)) {
         try {
@@ -63,8 +80,8 @@ export function buildMutationPlan(
             if (ledger.applied_updates && ledger.applied_updates.some(entry => entry.hash === canonicalHash)) {
                 isAlreadyApplied = true;
             }
-        } catch {
-            warnings.push('Não foi possível ler o arquivo .pactx-history.json.');
+        } catch (err: any) {
+            throw new Error(`Falha de integridade: O arquivo de histórico .pactx-history.json está corrompido ou contém JSON inválido (${err.message}). Operação abortada.`);
         }
     }
 
@@ -173,17 +190,17 @@ export function buildMutationPlan(
         }
     }
 
-    // 5. Planejamento do state.md
+    // 5. Planejamento do state.md (Semântica de PATCH: campos opcionais preservados se não enviados)
     if (payload.state) {
         plan.operations.stateUpdate = {
             targetPath: path.join(contextDir, 'state.md'),
-            activeTask: payload.state.active_task || '',
-            status: payload.state.status || 'IN_PROGRESS',
-            recommendedModel: payload.state.recommended_model || 'Medium',
+            activeTask: payload.state.active_task !== undefined ? payload.state.active_task : undefined,
+            status: payload.state.status !== undefined ? payload.state.status : undefined,
+            recommendedModel: payload.state.recommended_model !== undefined ? payload.state.recommended_model : undefined,
             newCompletedItems: payload.state.completed_items || [],
             newFacts: payload.state.new_facts || [],
             newRejectedHypotheses: payload.state.rejected_hypotheses || [],
-            nextAction: payload.state.next_action || '',
+            nextAction: payload.state.next_action !== undefined ? payload.state.next_action : undefined,
         };
     }
 

@@ -3,26 +3,50 @@ import path from 'node:path';
 import yaml from 'yaml';
 import { MutationPlan, HistoryLedger } from './types';
 import { ContextLock } from './lock';
+import { getCurrentContextRevision } from '../composer';
 
 const MAX_HISTORY_ENTRIES = 500;
 
-export function safeWriteFileSync(filePath: string, content: string, encoding: BufferEncoding = 'utf-8'): void {
+export function safeAtomicWriteFileSync(
+    filePath: string,
+    content: string,
+    encoding: BufferEncoding = 'utf-8'
+): void {
+    // 1. Verificação de Segurança (Anti-Symlink & Anti-Hardlink)
     try {
         const stat = fs.lstatSync(filePath);
         if (stat.isSymbolicLink()) {
             throw new Error(`Violação de segurança: "${filePath}" é um link simbólico. Escrita recusada.`);
         }
-    } catch (err: any) {
-        if (err.code !== 'ENOENT') {
-            throw err;
+        if (stat.isFile() && stat.nlink > 1) {
+            fs.unlinkSync(filePath);
         }
+    } catch (err: any) {
+        if (err.code !== 'ENOENT') throw err;
     }
-    fs.writeFileSync(filePath, content, encoding);
+
+    // 2. Escrita em Arquivo Temporário no MESMO diretório (garante mesmo mount/volume de FS)
+    const dir = path.dirname(filePath);
+    const tempPath = path.join(dir, `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`);
+
+    try {
+        fs.writeFileSync(tempPath, content, encoding);
+        // 3. Rename Atômico (Substituição instantânea no nível do SO/POSIX/NTFS)
+        fs.renameSync(tempPath, filePath);
+    } catch (err) {
+        // Limpeza de arquivo temporário órfão em caso de erro
+        if (fs.existsSync(tempPath)) {
+            try { fs.unlinkSync(tempPath); } catch {}
+        }
+        throw err;
+    }
 }
+
+export const safeWriteFileSync = safeAtomicWriteFileSync;
 
 export function sanitizeBodyField(val: string): string {
     if (typeof val !== 'string' || !val) return '';
-    return val
+    let sanitized = val
         .replace(/\r\n/g, '\n')
         .split('\n')
         .map(line => {
@@ -43,6 +67,14 @@ export function sanitizeBodyField(val: string): string {
         })
         .join('\n')
         .trim();
+
+    // Neutraliza comentários e tags de sistema que possam manipular parsers de LLMs downstream (P0-01)
+    sanitized = sanitized
+        .replace(/<!--/g, '&lt;!--')
+        .replace(/-->/g, '--&gt;')
+        .replace(/<\/?(system|instruction|context|rules|prompt|pactx)[^>]*>/gi, '[tag-escaped]');
+
+    return sanitized;
 }
 
 function normalizeLine(line: string): string {
@@ -77,7 +109,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
                 if (origContent === null) {
                     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
                 } else {
-                    safeWriteFileSync(filePath, origContent, 'utf-8');
+                    safeAtomicWriteFileSync(filePath, origContent, 'utf-8');
                 }
             } catch {}
         }
@@ -113,7 +145,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             const body = `# Decisão\n${sanitizedDecision}\n\n# Motivo\n${sanitizedReason}\n`;
             const fullContent = `---\n${frontmatterYaml}\n---\n\n${body}`;
 
-            safeWriteFileSync(adr.targetPath, fullContent, 'utf-8');
+            safeAtomicWriteFileSync(adr.targetPath, fullContent, 'utf-8');
             if (snapshot.get(adr.targetPath) === null) {
                 createdFiles.push(adr.targetPath);
             }
@@ -138,14 +170,15 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
                     const newFrontmatter = yaml.stringify(data).trim();
                     const newContent = `---\n${newFrontmatter}\n---\n${match[2]}`;
-                    safeWriteFileSync(adr.targetPath, newContent, 'utf-8');
+                    safeAtomicWriteFileSync(adr.targetPath, newContent, 'utf-8');
                 } else {
                     throw new Error(`Estrutura de frontmatter inválida ou corrompida no ADR: ${adr.targetPath}`);
                 }
             }
         }
 
-        // 3. Atualizar state.md
+        // 3. Atualizar state.md (Semântica de PATCH: preserva campos não fornecidos)
+        let finalActiveTask = '';
         if (plan.operations.stateUpdate) {
             const statePath = plan.operations.stateUpdate.targetPath;
             recordSnapshot(statePath);
@@ -154,42 +187,84 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             let existingHypotheses: string[] = [];
             let existingFacts: string[] = [];
             let existingSprint = 'SPRINT_CURRENT';
+            let existingStatus: 'IN_PROGRESS' | 'BLOCKED' | 'COMPLETED' = 'IN_PROGRESS';
+            let existingModel: 'Medium' | 'High' = 'Medium';
+            let existingActiveTaskFm = '';
+            const existingActiveTaskBody: string[] = [];
+            const existingNextActionBody: string[] = [];
+            const customSections: Array<{ header: string; lines: string[] }> = [];
 
             const isPlaceholder = (s: string) => /^\([^)]+\)$/.test(s.trim());
 
             if (fs.existsSync(statePath)) {
                 const raw = fs.readFileSync(statePath, 'utf-8');
 
-                // Preserva sprint existente se presente no frontmatter
+                // Preserva sprint, status, model e active_task se presentes no frontmatter
                 const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
                 if (fmMatch) {
                     try {
                         const existingFm = yaml.parse(fmMatch[1]);
-                        if (existingFm && existingFm.sprint) {
-                            existingSprint = String(existingFm.sprint);
+                        if (existingFm) {
+                            if (existingFm.sprint) existingSprint = String(existingFm.sprint);
+                            if (existingFm.status) existingStatus = existingFm.status;
+                            if (existingFm.recommended_model) existingModel = existingFm.recommended_model;
+                            if (existingFm.active_task) existingActiveTaskFm = String(existingFm.active_task);
                         }
                     } catch {}
                 }
 
-                const lines = raw.split(/\r?\n/);
+                // Remove frontmatter para parsear o corpo do state.md
+                const bodyText = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+                const lines = bodyText.split(/\r?\n/);
                 let currentSection = '';
 
                 for (const line of lines) {
-                    const sectionLine = line.replace(/^#+\s*/, '').replace(/^[^\p{L}\p{N}]+/u, '').trim().toLowerCase();
-                    if (sectionLine.startsWith('o que foi feito')) {
-                        currentSection = 'completed';
-                    } else if (sectionLine.startsWith('hipóteses descartadas') || sectionLine.startsWith('hipoteses descartadas')) {
-                        currentSection = 'hypotheses';
-                    } else if (sectionLine.startsWith('fatos')) {
-                        currentSection = 'facts';
-                    } else if (/^#+\s/.test(line.trim())) {
-                        currentSection = 'other';
+                    const isHeading = /^#+\s/.test(line.trim());
+                    if (isHeading) {
+                        const sectionLine = line.replace(/^#+\s*/, '').replace(/^[^\p{L}\p{N}]+/u, '').trim().toLowerCase();
+                        if (sectionLine.startsWith('objetivo atual')) {
+                            currentSection = 'objective';
+                        } else if (sectionLine.startsWith('o que foi feito')) {
+                            currentSection = 'completed';
+                        } else if (sectionLine.startsWith('hipóteses descartadas') || sectionLine.startsWith('hipoteses descartadas')) {
+                            currentSection = 'hypotheses';
+                        } else if (sectionLine.startsWith('fatos')) {
+                            currentSection = 'facts';
+                        } else if (sectionLine.startsWith('próxima ação imediata') || sectionLine.startsWith('proxima acao imediata')) {
+                            currentSection = 'next_action';
+                        } else {
+                            // Seção customizada do usuário (P1-01)
+                            currentSection = 'custom';
+                            customSections.push({ header: line, lines: [] });
+                        }
+                    } else if (currentSection === 'custom') {
+                        if (customSections.length > 0) {
+                            customSections[customSections.length - 1].lines.push(line);
+                        }
+                    } else if (currentSection === 'objective') {
+                        if (line.trim() && !isPlaceholder(line)) {
+                            existingActiveTaskBody.push(line.trim());
+                        }
+                    } else if (currentSection === 'next_action') {
+                        if (line.trim() && !isPlaceholder(line)) {
+                            existingNextActionBody.push(line.trim());
+                        }
                     } else if (line.trim().startsWith('-')) {
                         const clean = line.replace(/^-\s*(\[[ x]\])?\s*/, '').trim();
                         if (clean && !isPlaceholder(clean)) {
                             if (currentSection === 'completed') existingCompleted.push(clean);
                             if (currentSection === 'hypotheses') existingHypotheses.push(clean);
                             if (currentSection === 'facts') existingFacts.push(clean);
+                        }
+                    } else if (/^(\s{2,}|\t)/.test(line) && line.trim()) {
+                        // Suporte a itens multi-linha indentados (P2-02)
+                        const trimmedLine = line.trim();
+                        if (currentSection === 'completed' && existingCompleted.length > 0) {
+                            existingCompleted[existingCompleted.length - 1] += '\n  ' + trimmedLine;
+                        } else if (currentSection === 'hypotheses' && existingHypotheses.length > 0) {
+                            existingHypotheses[existingHypotheses.length - 1] += '\n  ' + trimmedLine;
+                        } else if (currentSection === 'facts' && existingFacts.length > 0) {
+                            existingFacts[existingFacts.length - 1] += '\n  ' + trimmedLine;
                         }
                     }
                 }
@@ -213,19 +288,36 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             const finalHypotheses = mergeUnique(existingHypotheses, plan.operations.stateUpdate.newRejectedHypotheses);
             const finalFacts = mergeUnique(existingFacts, plan.operations.stateUpdate.newFacts);
 
+            const existingActiveTask = existingActiveTaskFm || existingActiveTaskBody.join('\n');
+            const existingNextAction = existingNextActionBody.join('\n');
+
+            finalActiveTask = plan.operations.stateUpdate.activeTask !== undefined
+                ? sanitizeBodyField(plan.operations.stateUpdate.activeTask)
+                : sanitizeBodyField(existingActiveTask);
+
+            const finalStatus = plan.operations.stateUpdate.status !== undefined
+                ? plan.operations.stateUpdate.status
+                : existingStatus;
+
+            const finalModel = plan.operations.stateUpdate.recommendedModel !== undefined
+                ? plan.operations.stateUpdate.recommendedModel
+                : existingModel;
+
+            const finalNextAction = plan.operations.stateUpdate.nextAction !== undefined
+                ? sanitizeBodyField(plan.operations.stateUpdate.nextAction)
+                : sanitizeBodyField(existingNextAction);
+
             const frontmatter = {
                 spec_version: '1.0',
                 sprint: existingSprint,
-                active_task: plan.operations.stateUpdate.activeTask,
-                recommended_model: plan.operations.stateUpdate.recommendedModel,
-                status: plan.operations.stateUpdate.status,
+                active_task: finalActiveTask,
+                recommended_model: finalModel,
+                status: finalStatus,
             };
 
             const stateFrontmatter = yaml.stringify(frontmatter).trim();
-            const sanitizedActiveTask = sanitizeBodyField(plan.operations.stateUpdate.activeTask);
-            const sanitizedNextAction = sanitizeBodyField(plan.operations.stateUpdate.nextAction);
 
-            let stateBody = `# Objetivo Atual\n${sanitizedActiveTask}\n\n`;
+            let stateBody = `# Objetivo Atual\n${finalActiveTask || '(Definir objetivo)'}\n\n`;
 
             stateBody += `# O que foi feito recentemente\n`;
             stateBody += finalCompleted.length > 0 ? finalCompleted.map(c => `- [x] ${c}`).join('\n') + '\n\n' : `- (Nenhum item)\n\n`;
@@ -238,9 +330,15 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             stateBody += `# Hipóteses Descartadas / Erros Conhecidos (NÃO REPETIR)\n`;
             stateBody += finalHypotheses.length > 0 ? finalHypotheses.map(h => `- ${h}`).join('\n') + '\n\n' : `- (Nenhuma)\n\n`;
 
-            stateBody += `# Próxima Ação Imediata\n${sanitizedNextAction || '(Definir próxima ação)'}\n`;
+            stateBody += `# Próxima Ação Imediata\n${finalNextAction || '(Definir próxima ação)'}\n`;
 
-            safeWriteFileSync(statePath, `---\n${stateFrontmatter}\n---\n\n${stateBody}`, 'utf-8');
+            // Re-anexa seções customizadas do usuário (P1-01)
+            for (const custom of customSections) {
+                const content = custom.lines.join('\n').trim();
+                stateBody += `\n${custom.header}\n` + (content ? `${content}\n` : '\n');
+            }
+
+            safeAtomicWriteFileSync(statePath, `---\n${stateFrontmatter}\n---\n\n${stateBody}`, 'utf-8');
         }
 
         // 4. Append ao glossary.md
@@ -250,30 +348,36 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
             let content = fs.existsSync(glossaryPath) ? fs.readFileSync(glossaryPath, 'utf-8').trim() : '# Glossário & Contratos';
             for (const term of plan.operations.appendedGlossaryTerms) {
-                const normalizedTerm = sanitizeBodyField(term.term.trim());
+                const cleanTermName = term.term.replace(/[\r\n]+/g, ' ').trim();
+                const normalizedTerm = sanitizeBodyField(cleanTermName);
                 const sanitizedDefinition = sanitizeBodyField(term.definition.trim());
                 if (!content.toLowerCase().includes(`**${normalizedTerm.toLowerCase()}**`)) {
                     content += `\n- **${normalizedTerm}**: ${sanitizedDefinition}`;
                 }
             }
-            safeWriteFileSync(glossaryPath, content + '\n', 'utf-8');
+            safeAtomicWriteFileSync(glossaryPath, content + '\n', 'utf-8');
         }
 
-        // 5. Atualizar o Ledger de Histórico com Limite de Entradas
+        // 5. Atualizar o Ledger de Histórico com Limite de Entradas (Fail-Closed)
         recordSnapshot(historyFile);
         let ledger: HistoryLedger = { version: '1.0', applied_updates: [] };
         if (fs.existsSync(historyFile)) {
             try {
                 ledger = JSON.parse(fs.readFileSync(historyFile, 'utf-8'));
-            } catch {
-                ledger = { version: '1.0', applied_updates: [] };
+            } catch (err: any) {
+                throw new Error(`Falha de integridade: O arquivo de histórico .pactx-history.json está corrompido (${err.message}). Operação abortada.`);
             }
         }
+
+        const appliedRev = plan.appliedRevision || getCurrentContextRevision(contextDir);
 
         ledger.applied_updates.push({
             hash: plan.canonicalHash,
             applied_at: new Date().toISOString(),
-            task: plan.operations.stateUpdate?.activeTask,
+            forced: plan.isForced || false,
+            base_revision: plan.baseRevision,
+            applied_revision: appliedRev,
+            task: finalActiveTask || plan.operations.stateUpdate?.activeTask,
             created_adrs: plan.operations.createdAdrs.map(a => a.id),
             superseded_adrs: plan.operations.supersededAdrs.map(a => a.id),
         });
@@ -283,7 +387,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             ledger.applied_updates = ledger.applied_updates.slice(-MAX_HISTORY_ENTRIES);
         }
 
-        safeWriteFileSync(historyFile, JSON.stringify(ledger, null, 2), 'utf-8');
+        safeAtomicWriteFileSync(historyFile, JSON.stringify(ledger, null, 2), 'utf-8');
 
     } catch (error: any) {
         // FAIL-CLOSED: Rollback Transacional Instantâneo
