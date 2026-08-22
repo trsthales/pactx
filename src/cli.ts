@@ -74,6 +74,9 @@ program
                 }
                 rawInput = fs.readFileSync(options.file, 'utf-8');
             } else if (options.stdin) {
+                if (process.stdin.isTTY) {
+                    throw new Error('Nenhum dado recebido via pipe. Utilize: cat update.md | pactx update --stdin');
+                }
                 rawInput = fs.readFileSync(0, 'utf-8');
             } else {
                 try {
