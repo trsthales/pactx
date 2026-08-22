@@ -78,5 +78,5 @@ Simplicity, maintainability, and long-term developer ergonomics.
     );
 
     console.log(pc.green('✔ .ai-context structure initialized successfully!'));
-    console.log(pc.cyan("👉 Edit files in .ai-context/ and run 'npx pactx' to copy context."));
+    console.log(pc.cyan("👉 Edit files in .ai-context/ and run 'npx @trsthales/pactx' to copy context."));
 }

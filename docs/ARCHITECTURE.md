@@ -37,7 +37,7 @@ In modern AI-assisted software development, tools and workflows often fail due t
 │   Git Runtime State (Branch, Recent Commits, Modified Files Diff)      │
 └──────────────────┬──────────────────────────────────▲──────────────────┘
                    │                                  │
-      1. npx pactx │ [EGRESS]            3. npx pactx │ update [INGRESS]
+      1. npx @trsthales/pactx │ [EGRESS] 3. npx @trsthales/pactx │ update [INGRESS]
      (composer.ts) │                        (applier) │ (Zero-Trust Pipeline)
                    ▼                                  │
     ┌──────────────────────────────┐   ┌──────────────┴──────────────────┐

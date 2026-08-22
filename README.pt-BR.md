@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="img/logo.png" alt="pactx banner" width="450">
+</p>
+
 # pactx 📦
 
 > **Motor universal de continuidade de contexto em loop fechado e handoff para desenvolvimento assistido por IA.**  
@@ -5,7 +9,7 @@
 
 🌐 **Idioma / Language:** [Português (Brasil)](./README.pt-BR.md) | [English](./README.md)
 
-[![npm version](https://img.shields.io/npm/v/pactx.svg)](https://www.npmjs.com/package/pactx)
+[![npm version](https://img.shields.io/npm/v/@trsthales/pactx.svg)](https://www.npmjs.com/package/@trsthales/pactx)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -29,7 +33,7 @@ O `pactx` transforma seu repositório na **fonte canônica da verdade** e cria u
 │      + Estado do Git em Runtime (branch, commits recentes, diff)       │
 └──────────────────┬──────────────────────────────────▲──────────────────┘
                    │                                  │
-      1. npx pactx │                     3. npx pactx │ update
+      1. npx @trsthales/pactx │        3. npx @trsthales/pactx │ update
          (Egresso) │                        (Ingresso)│ (Human-in-the-Loop)
                    ▼                                  │
     ┌──────────────────────────────┐   ┌──────────────┴──────────────────┐
@@ -54,7 +58,7 @@ Nenhuma instalação global é necessária:
 
 ### 1. Inicialize o `.ai-context/` no seu repositório
 ```bash
-npx pactx init
+npx @trsthales/pactx init
 ```
 
 Isso gera a estrutura canônica de diretórios:
@@ -68,15 +72,15 @@ Isso gera a estrutura canônica de diretórios:
 
 ### 2. Empacote o Contexto & Inicie a Sessão (1 Segundo)
 ```bash
-npx pactx
+npx @trsthales/pactx
 ```
 Saída:
 ```text
-✔ Context packed com sucesso!
-📋 Copiado para a Área de Transferência!
-Tamanho: 1.45 KB | ~380 tokens
+✔ Context packed successfully!
+📋 Copied to clipboard!
+Size: 1.45 KB | ~380 tokens
 
-👉 Cole diretamente no ChatGPT, Claude, Gemini ou no seu agente!
+👉 Paste directly into ChatGPT, Claude, Gemini, or your coding agent!
 ```
 Cole (`Ctrl+V`) em qualquer chat de IA. O modelo entenderá instantaneamente a tarefa exata, arquitetura ativa, regras invioláveis e hipóteses já descartadas.
 
@@ -86,31 +90,31 @@ Ao concluir uma tarefa ou antes de trocar de chat, peça à IA:
 
 Copie a resposta da IA e execute no seu terminal:
 ```bash
-npx pactx update
+npx @trsthales/pactx update
 ```
 
 Interface Interativa de Revisão:
 ```text
-📦 Bloco pactx-update detectado!
+📦 pactx-update block detected!
 
-Plano de Mutação Canônica:
+Canonical Mutation Plan:
 ────────────────────────────────────────────────────────────────────────────
 📝 .ai-context/state.md
-   • Tarefa Ativa: "TASK-05 Login de Alunos via PIN" [IN_PROGRESS]
-   • Próximo Passo: "Implementar validação do StudentPIN no authController"
-   • [+] Fato: "Rate limit de login por PIN deve ser restrito a 5 tentativas por minuto"
-   • [+] Hipótese Descartada: "O login de alunos NÃO deve exigir e-mail ou senha"
+   • Active Task: "TASK-05 Login de Alunos via PIN" [IN_PROGRESS]
+   • Next Action: "Implementar validação do StudentPIN no authController"
+   • [+] Fact: "Rate limit de login por PIN deve ser restrito a 5 tentativas por minuto"
+   • [+] Discarded Hypothesis: "O login de alunos NÃO deve exigir e-mail ou senha"
 🏛️  .ai-context/decisions/DEC-002.md [CREATE]
-   • Título: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
-   • Decisão: "Utilizar combinação de Turma + PIN com hash seguro no PostgreSQL"
+   • Title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
+   • Decision: "Utilizar combinação de Turma + PIN com hash seguro no PostgreSQL"
 📖 .ai-context/glossary.md [APPEND]
    • StudentPIN: "Código numérico de 4 dígitos atribuído ao aluno"
 ────────────────────────────────────────────────────────────────────────────
 
-? Deseja aplicar as alterações canônicas ao repositório? (Y/n) y
+? Apply canonical changes to repository? (Y/n) y
 
-✔ Estado canônico atualizado com sucesso!
-📋 Ledger de auditoria gravado em .ai-context/.pactx-history.json
+✔ Canonical state updated successfully!
+📋 Audit ledger recorded in .ai-context/.pactx-history.json
 ```
 
 ---

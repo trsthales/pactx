@@ -1,4 +1,8 @@
 
+<p align="center">
+  <img src="img/logo.png" alt="pactx banner" width="450">
+</p>
+
 # pactx 📦
 
 > **Universal closed-loop context continuity & handoff engine for AI-assisted software development.**  
@@ -6,7 +10,7 @@
 
 🌐 **Language / Idioma:** [English](./README.md) | [Português (Brasil)](./README.pt-BR.md)
 
-[![npm version](https://img.shields.io/npm/v/pactx.svg)](https://www.npmjs.com/package/pactx)
+[![npm version](https://img.shields.io/npm/v/@trsthales/pactx.svg)](https://www.npmjs.com/package/@trsthales/pactx)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -30,7 +34,7 @@ Long chat sessions suffer from context window degradation, hallucinations, and l
 │      + Git Runtime State (branch, recent commits, modified files)      │
 └──────────────────┬──────────────────────────────────▲──────────────────┘
                    │                                  │
-      1. npx pactx │                     3. npx pactx │ update
+      1. npx @trsthales/pactx │        3. npx @trsthales/pactx │ update
          (Egress)  │                        (Ingress) │ (Human-in-the-Loop)
                    ▼                                  │
     ┌──────────────────────────────┐   ┌──────────────┴──────────────────┐
@@ -55,7 +59,7 @@ No global installation required:
 
 ### 1. Initialize `.ai-context/` in your repository
 ```bash
-npx pactx init
+npx @trsthales/pactx init
 ```
 
 This scaffolds the canonical directory structure:
@@ -69,15 +73,15 @@ This scaffolds the canonical directory structure:
 
 ### 2. Pack Context & Start Session (1 Second)
 ```bash
-npx pactx
+npx @trsthales/pactx
 ```
 Output:
 ```text
-✔ Context packed com sucesso!
-📋 Copiado para a Área de Transferência!
-Tamanho: 1.45 KB | ~380 tokens
+✔ Context packed successfully!
+📋 Copied to clipboard!
+Size: 1.45 KB | ~380 tokens
 
-👉 Cole diretamente no ChatGPT, Claude, Gemini ou no seu agente!
+👉 Paste directly into ChatGPT, Claude, Gemini, or your coding agent!
 ```
 Paste (`Ctrl+V`) into any AI chat. The AI will immediately understand the exact task, active architecture, invariant rules, and discarded hypotheses.
 
@@ -87,31 +91,31 @@ When finishing a task or before switching chats, ask the AI:
 
 Copy the AI's response and run in your terminal:
 ```bash
-npx pactx update
+npx @trsthales/pactx update
 ```
 
 Interactive Review UI:
 ```text
-📦 Bloco pactx-update detectado!
+📦 pactx-update block detected!
 
-Plano de Mutação Canônica:
+Canonical Mutation Plan:
 ────────────────────────────────────────────────────────────────────────────
 📝 .ai-context/state.md
-   • Tarefa Ativa: "TASK-05 Login de Alunos via PIN" [IN_PROGRESS]
-   • Próximo Passo: "Implementar validação do StudentPIN no authController"
-   • [+] Fato: "Rate limit de login por PIN deve ser restrito a 5 tentativas por minuto"
-   • [+] Hipótese Descartada: "O login de alunos NÃO deve exigir e-mail ou senha"
+   • Active Task: "TASK-05 Login de Alunos via PIN" [IN_PROGRESS]
+   • Next Action: "Implementar validação do StudentPIN no authController"
+   • [+] Fact: "Rate limit de login por PIN deve ser restrito a 5 tentativas por minuto"
+   • [+] Discarded Hypothesis: "O login de alunos NÃO deve exigir e-mail ou senha"
 🏛️  .ai-context/decisions/DEC-002.md [CREATE]
-   • Título: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
-   • Decisão: "Utilizar combinação de Turma + PIN com hash seguro no PostgreSQL"
+   • Title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
+   • Decision: "Utilizar combinação de Turma + PIN com hash seguro no PostgreSQL"
 📖 .ai-context/glossary.md [APPEND]
    • StudentPIN: "Código numérico de 4 dígitos atribuído ao aluno"
 ────────────────────────────────────────────────────────────────────────────
 
-? Deseja aplicar as alterações canônicas ao repositório? (Y/n) y
+? Apply canonical changes to repository? (Y/n) y
 
-✔ Estado canônico atualizado com sucesso!
-📋 Ledger de auditoria gravado em .ai-context/.pactx-history.json
+✔ Canonical state updated successfully!
+📋 Audit ledger recorded in .ai-context/.pactx-history.json
 ```
 
 ---

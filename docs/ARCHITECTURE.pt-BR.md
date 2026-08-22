@@ -37,7 +37,7 @@ O `pactx` opera através de dois fluxos principais: **Egresso** (Empacotamento d
 │   Estado de Runtime do Git (Branch, Commits Recentes, Diff Local)      │
 └──────────────────┬──────────────────────────────────▲──────────────────┘
                    │                                  │
-      1. npx pactx │ [EGRESSO]           3. npx pactx │ update [INGRESSO]
+      1. npx @trsthales/pactx │ [EGRESSO] 3. npx @trsthales/pactx │ update [INGRESSO]
      (composer.ts) │                        (applier) │ (Pipeline Zero-Trust)
                    ▼                                  │
     ┌──────────────────────────────┐   ┌──────────────┴──────────────────┐
