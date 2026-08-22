@@ -1,5 +1,5 @@
 {
-  "name": "pactx",
+  "name": "@trsthales/pactx",
   "version": "0.2.1",
   "description": "Universal context continuity & handoff engine for AI-assisted development",
   "bin": {
