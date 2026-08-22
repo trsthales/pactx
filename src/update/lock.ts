@@ -33,7 +33,7 @@ export class ContextLock {
                 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepTime);
             }
         }
-        throw new Error('Timeout: Não foi possível obter lock em .ai-context/. Outra instância do pactx está em execução.');
+        throw new Error('Timeout: Unable to acquire lock on .ai-context/. Another pactx process is currently running.');
     }
 
     release(): void {

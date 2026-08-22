@@ -56,7 +56,7 @@ export function extractPactxBlock(content: string): string {
         } catch {
             // continua para lançar erro padronizado
         }
-        throw new Error('Nenhum bloco ```pactx-update``` válido foi encontrado no conteúdo fornecido.');
+        throw new Error('No valid ```pactx-update``` block was found in the provided input.\n\n👉 Tip: Ask your AI in chat: "/handoff" (or "Generate the pactx-update block") and copy its response before running \'pactx update\'.');
     }
     return match[1].trim();
 }
@@ -84,11 +84,11 @@ function ensureBoundedStringArray(
 ): string[] {
     const arr = ensureStringArray(val);
     if (arr.length > maxItems) {
-        warnings.push(`Limite excedido: [${fieldName}] continha ${arr.length} itens e foi limitado aos primeiros ${maxItems}.`);
+        warnings.push(`Limit exceeded: [${fieldName}] contained ${arr.length} items and was truncated to the first ${maxItems}.`);
     }
     return arr.slice(0, maxItems).map(item => {
         if (item.length > maxLength) {
-            warnings.push(`Item em [${fieldName}] excedeu ${maxLength} caracteres e foi truncado.`);
+            warnings.push(`Item in [${fieldName}] exceeded ${maxLength} characters and was truncated.`);
             return item.substring(0, maxLength);
         }
         return item;
@@ -129,7 +129,7 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
     // Validação de limite de tamanho de input (H-02)
     const inputBytes = Buffer.byteLength(rawContent, 'utf-8');
     if (inputBytes > MAX_INPUT_SIZE) {
-        throw new Error(`Tamanho do input (${(inputBytes / 1024).toFixed(1)}KB) excede o limite máximo permitido de ${MAX_INPUT_SIZE / 1024}KB.`);
+        throw new Error(`Input size (${(inputBytes / 1024).toFixed(1)}KB) exceeds the maximum allowed limit of ${MAX_INPUT_SIZE / 1024}KB.`);
     }
 
     const yamlText = extractPactxBlock(rawContent);
@@ -138,16 +138,16 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
     try {
         parsed = yaml.parse(yamlText);
     } catch (err: any) {
-        throw new Error(`Falha de sintaxe no YAML do pactx-update: ${err.message}`);
+        throw new Error(`YAML syntax failure in pactx-update block: ${err.message}`);
     }
 
     if (!parsed || typeof parsed !== 'object') {
-        throw new Error('O bloco pactx-update deve conter um objeto YAML estruturado.');
+        throw new Error('The pactx-update block must contain a structured YAML object.');
     }
 
     const parsedVersion = String(parsed.version ?? '').trim();
     if (parsedVersion !== '1.0' && parsedVersion !== '1') {
-        throw new Error(`Versão de schema não suportada: "${parsed.version}". Esperado: "1.0".`);
+        throw new Error(`Unsupported schema version: "${parsed.version}". Expected: "1.0".`);
     }
     parsed.version = '1.0';
 
@@ -169,7 +169,7 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
         if (parsed.state.status !== undefined && parsed.state.status !== null) {
             const statusStr = String(parsed.state.status).trim();
             if (!VALID_STATUSES.includes(statusStr as any)) {
-                throw new Error(`Status inválido: "${parsed.state.status}". Valores permitidos: ${VALID_STATUSES.join(', ')}.`);
+                throw new Error(`Invalid status: "${parsed.state.status}". Allowed values: ${VALID_STATUSES.join(', ')}.`);
             }
             parsed.state.status = statusStr;
         }
@@ -178,7 +178,7 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
         if (parsed.state.recommended_model !== undefined && parsed.state.recommended_model !== null) {
             const modelStr = String(parsed.state.recommended_model).trim();
             if (!VALID_MODELS.includes(modelStr as any)) {
-                throw new Error(`recommended_model inválido: "${parsed.state.recommended_model}". Valores permitidos: ${VALID_MODELS.join(', ')}.`);
+                throw new Error(`Invalid recommended_model: "${parsed.state.recommended_model}". Allowed values: ${VALID_MODELS.join(', ')}.`);
             }
             parsed.state.recommended_model = modelStr;
         }
@@ -187,14 +187,14 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
     // 1. Validação de Segurança dos Identificadores de ADR (Path Traversal Jail) e Cardinalidade
     if (parsed.new_decisions && Array.isArray(parsed.new_decisions)) {
         if (parsed.new_decisions.length > MAX_DECISIONS_PER_BATCH) {
-            warnings.push(`Limite excedido: [new_decisions] continha ${parsed.new_decisions.length} itens e foi limitado aos primeiros ${MAX_DECISIONS_PER_BATCH}.`);
+            warnings.push(`Limit exceeded: [new_decisions] contained ${parsed.new_decisions.length} items and was truncated to the first ${MAX_DECISIONS_PER_BATCH}.`);
             parsed.new_decisions = parsed.new_decisions.slice(0, MAX_DECISIONS_PER_BATCH);
         }
         for (const d of parsed.new_decisions) {
             if (d && typeof d === 'object' && d.id !== undefined && d.id !== null) {
                 const idStr = String(d.id).trim();
                 if (!ADR_ID_REGEX.test(idStr)) {
-                    throw new Error(`Identificador de decisão inválido: "${d.id}". Deve casar com /^(auto|DEC-\\d{3,4})$/i.`);
+                    throw new Error(`Invalid decision identifier: "${d.id}". Must match /^(auto|DEC-(?!0+$)\\d{3,4})$/i.`);
                 }
                 d.id = idStr.toLowerCase() === 'auto' ? 'auto' : idStr.toUpperCase();
             }
@@ -203,23 +203,23 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
 
     if (parsed.superseded_decisions && Array.isArray(parsed.superseded_decisions)) {
         if (parsed.superseded_decisions.length > MAX_DECISIONS_PER_BATCH) {
-            warnings.push(`Limite excedido: [superseded_decisions] continha ${parsed.superseded_decisions.length} itens e foi limitado aos primeiros ${MAX_DECISIONS_PER_BATCH}.`);
+            warnings.push(`Limit exceeded: [superseded_decisions] contained ${parsed.superseded_decisions.length} items and was truncated to the first ${MAX_DECISIONS_PER_BATCH}.`);
             parsed.superseded_decisions = parsed.superseded_decisions.slice(0, MAX_DECISIONS_PER_BATCH);
         }
         for (const d of parsed.superseded_decisions) {
             if (!d || typeof d !== 'object' || !d.id) {
-                throw new Error(`Identificador de decisão substituída inválido: "${d?.id}". Deve casar com /^(auto|DEC-\\d{3,4})$/i.`);
+                throw new Error(`Invalid superseded decision identifier: "${d?.id}". Must match /^(auto|DEC-(?!0+$)\\d{3,4})$/i.`);
             }
             const idStr = String(d.id).trim();
             if (!ADR_ID_REGEX.test(idStr)) {
-                throw new Error(`Identificador de decisão substituída inválido: "${d.id}". Deve casar com /^(auto|DEC-\\d{3,4})$/i.`);
+                throw new Error(`Invalid superseded decision identifier: "${d.id}". Must match /^(auto|DEC-(?!0+$)\\d{3,4})$/i.`);
             }
             d.id = idStr.toUpperCase();
 
             if (d.by !== undefined && d.by !== null) {
                 const byStr = String(d.by).trim();
                 if (!ADR_ID_REGEX.test(byStr)) {
-                    throw new Error(`Identificador em "by" inválido: "${d.by}". Deve casar com /^(auto|DEC-\\d{3,4})$/i.`);
+                    throw new Error(`Invalid identifier in "by": "${d.by}". Must match /^(auto|DEC-(?!0+$)\\d{3,4})$/i.`);
                 }
                 d.by = byStr.toLowerCase() === 'auto' ? 'auto' : byStr.toUpperCase();
             }
@@ -228,7 +228,7 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
 
     if (parsed.new_glossary_terms && Array.isArray(parsed.new_glossary_terms)) {
         if (parsed.new_glossary_terms.length > MAX_GLOSSARY_TERMS_PER_BATCH) {
-            warnings.push(`Limite excedido: [new_glossary_terms] continha ${parsed.new_glossary_terms.length} itens e foi limitado aos primeiros ${MAX_GLOSSARY_TERMS_PER_BATCH}.`);
+            warnings.push(`Limit exceeded: [new_glossary_terms] contained ${parsed.new_glossary_terms.length} items and was truncated to the first ${MAX_GLOSSARY_TERMS_PER_BATCH}.`);
             parsed.new_glossary_terms = parsed.new_glossary_terms.slice(0, MAX_GLOSSARY_TERMS_PER_BATCH);
         }
     }
@@ -239,7 +239,7 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
             const variants = normalizeForScanning(node);
             for (const pattern of SUSPICIOUS_PATTERNS) {
                 if (variants.some(v => pattern.test(v))) {
-                    warnings.push(`Padrão suspeito detectado em [${currentPath}]: "${node.substring(0, 60)}..."`);
+                    warnings.push(`Suspicious pattern detected in [${currentPath}]: "${node.substring(0, 60)}..."`);
                     break;
                 }
             }

@@ -19,16 +19,16 @@ program
 
 program
     .command('init')
-    .description('Inicializa a estrutura .ai-context/ no projeto atual')
+    .description('Initialize .ai-context/ structure in current project')
     .action(() => {
         initProject();
     });
 
 program
     .command('pack', { isDefault: true })
-    .description('Empacota o estado atual do projeto e copia para a área de transferência')
-    .option('-s, --short', 'Gera uma versão mais compacta em tokens')
-    .option('--stdout', 'Apenas imprime no terminal sem copiar para o clipboard')
+    .description('Package current project state and copy to clipboard')
+    .option('-s, --short', 'Generate a more compact version in tokens')
+    .option('--stdout', 'Print to terminal only without copying to clipboard')
     .action(async (options) => {
         try {
             const output = composeContext(process.cwd(), { short: options.short });
@@ -42,96 +42,96 @@ program
 
             try {
                 await clipboardy.write(output);
-                console.log(pc.green('✔ Context packed com sucesso!'));
-                console.log(pc.bold(pc.white(`📋 Copiado para a Área de Transferência!`)));
-                console.log(pc.dim(`Tamanho: ${(bytes / 1024).toFixed(2)} KB | ~${estimatedTokens} tokens`));
-                console.log(pc.cyan(`\n👉 Cole diretamente no ChatGPT, Claude, Gemini ou no seu agente!`));
+                console.log(pc.green('✔ Context packed successfully!'));
+                console.log(pc.bold(pc.white(`📋 Copied to clipboard!`)));
+                console.log(pc.dim(`Size: ${(bytes / 1024).toFixed(2)} KB | ~${estimatedTokens} tokens`));
+                console.log(pc.cyan(`\n👉 Paste directly into ChatGPT, Claude, Gemini, or your coding agent!`));
             } catch {
-                console.log(pc.yellow('⚠ Não foi possível acessar o clipboard. Exibindo saída no terminal:\n'));
+                console.log(pc.yellow('⚠ Could not access clipboard. Displaying output in terminal:\n'));
                 console.log(output);
             }
         } catch (err: any) {
-            console.error(pc.red(`✖ Erro: ${err.message}`));
+            console.error(pc.red(`✖ Error: ${err.message}`));
             process.exit(1);
         }
     });
 
 program
     .command('update')
-    .description('Ingere a resposta da IA e atualiza o estado canônico do repositório')
-    .option('--dry-run', 'Apenas simula e exibe o plano sem alterar arquivos no disco')
-    .option('-y, --yes', 'Aplica as mutações sem confirmação interativa')
-    .option('--force', 'Força a aplicação mesmo em caso de avisos críticos (ex: Stale Context com -y)')
-    .option('--file <path>', 'Lê o bloco pactx-update a partir de um arquivo')
-    .option('--stdin', 'Lê o bloco a partir do stdin (pipe)')
+    .description('Ingest AI response and update canonical repository state')
+    .option('--dry-run', 'Simulate and display the plan without modifying files on disk')
+    .option('-y, --yes', 'Apply mutations without interactive confirmation')
+    .option('--force', 'Force application even with critical warnings (e.g., Stale Context with -y)')
+    .option('--file <path>', 'Read pactx-update block from a file')
+    .option('--stdin', 'Read block from stdin (pipe)')
     .action(async (options) => {
         try {
             let rawInput = '';
 
             if (options.file) {
                 if (!fs.existsSync(options.file)) {
-                    throw new Error(`Arquivo não encontrado: ${options.file}`);
+                    throw new Error(`File not found: ${options.file}`);
                 }
                 rawInput = fs.readFileSync(options.file, 'utf-8');
             } else if (options.stdin) {
                 if (process.stdin.isTTY) {
-                    throw new Error('Nenhum dado recebido via pipe. Utilize: cat update.md | pactx update --stdin');
+                    throw new Error('No data received from pipe. Use: cat update.md | pactx update --stdin');
                 }
                 rawInput = fs.readFileSync(0, 'utf-8');
             } else {
                 try {
                     rawInput = await clipboardy.read();
                 } catch {
-                    throw new Error('Não foi possível ler o clipboard. Use --file ou --stdin.');
+                    throw new Error('Could not read clipboard. Use --file or --stdin.');
                 }
             }
 
             const { payload, canonicalHash, warnings } = parseAndValidateUpdate(rawInput);
             const plan = buildMutationPlan(process.cwd(), payload, canonicalHash, warnings);
 
-            console.log(pc.bold(pc.cyan('\n📦 Bloco pactx-update detectado!\n')));
+            console.log(pc.bold(pc.cyan('\n📦 pactx-update block detected!\n')));
 
             if (plan.isAlreadyApplied) {
-                console.log(pc.yellow(`ℹ Este bloco já foi aplicado anteriormente (Hash: ${canonicalHash.substring(0, 8)}). Operação concluída (No-Op).`));
+                console.log(pc.yellow(`ℹ This update was already applied previously (Hash: ${canonicalHash.substring(0, 8)}). Completed (No-Op).`));
                 return;
             }
 
             if (plan.warnings.length > 0) {
-                console.log(pc.bold(pc.yellow('⚠️ AVISOS:')));
+                console.log(pc.bold(pc.yellow('⚠️ WARNINGS:')));
                 plan.warnings.forEach(w => console.log(pc.yellow(`  • ${w}`)));
                 console.log('');
             }
 
             const hasStaleContext = plan.warnings.some(w => w.includes('Stale Context'));
             if (options.yes && hasStaleContext && !options.force) {
-                console.error(pc.red('✖ Erro: Stale Context detectado com flag -y/--yes.'));
-                console.error(pc.yellow('  O update foi baseado em uma revisão desatualizada do repositório.'));
-                console.error(pc.yellow('  Para forçar a aplicação sem confirmação interativa, utilize:'));
+                console.error(pc.red('✖ Error: Stale Context detected with -y/--yes flag.'));
+                console.error(pc.yellow('  The update was based on an outdated revision of the repository.'));
+                console.error(pc.yellow('  To force application without interactive confirmation, use:'));
                 console.error(pc.cyan('    pactx update -y --force\n'));
                 process.exit(1);
             }
 
             // Renderização do Plano em Texto Integral
-            console.log(pc.bold('Plano de Mutação Canônica:'));
+            console.log(pc.bold('Canonical Mutation Plan:'));
             console.log(pc.dim('────────────────────────────────────────────────────────────────────────────'));
 
             if (plan.operations.stateUpdate) {
                 console.log(pc.cyan('📝 .ai-context/state.md'));
-                console.log(`   • Tarefa Ativa: "${plan.operations.stateUpdate.activeTask}" [${plan.operations.stateUpdate.status}]`);
-                console.log(`   • Próximo Passo: "${plan.operations.stateUpdate.nextAction}"`);
-                plan.operations.stateUpdate.newFacts.forEach(f => console.log(pc.green(`   • [+] Fato: "${f}"`)));
-                plan.operations.stateUpdate.newRejectedHypotheses.forEach(h => console.log(pc.magenta(`   • [+] Hipótese Descartada: "${h}"`)));
+                console.log(`   • Active Task: "${plan.operations.stateUpdate.activeTask}" [${plan.operations.stateUpdate.status}]`);
+                console.log(`   • Next Action: "${plan.operations.stateUpdate.nextAction}"`);
+                plan.operations.stateUpdate.newFacts.forEach(f => console.log(pc.green(`   • [+] Fact: "${f}"`)));
+                plan.operations.stateUpdate.newRejectedHypotheses.forEach(h => console.log(pc.magenta(`   • [+] Discarded Hypothesis: "${h}"`)));
             }
 
             for (const adr of plan.operations.createdAdrs) {
                 console.log(pc.green(`🏛️  .ai-context/decisions/${adr.id}.md [CREATE]`));
-                console.log(`   • Título: "${adr.title}"`);
-                console.log(`   • Decisão: "${adr.decision}"`);
+                console.log(`   • Title: "${adr.title}"`);
+                console.log(`   • Decision: "${adr.decision}"`);
             }
 
             for (const adr of plan.operations.supersededAdrs) {
                 console.log(pc.yellow(`🏛️  .ai-context/decisions/${adr.id}.md [SUPERSEDE]`));
-                console.log(`   • Substituída por: ${adr.supersededBy} (${adr.reason})`);
+                console.log(`   • Superseded by: ${adr.supersededBy} (${adr.reason})`);
             }
 
             for (const term of plan.operations.appendedGlossaryTerms) {
@@ -142,30 +142,30 @@ program
             console.log(pc.dim('────────────────────────────────────────────────────────────────────────────\n'));
 
             if (options.dryRun) {
-                console.log(pc.yellow('🔍 Modo --dry-run: Nenhuma alteração foi gravada no disco.'));
+                console.log(pc.yellow('🔍 --dry-run mode: No files were modified on disk.'));
                 return;
             }
 
             const proceed = options.yes ? true : await new Promise<boolean>((resolve) => {
                 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-                rl.question(pc.bold('? Deseja aplicar as alterações canônicas ao repositório? (Y/n) '), (answer) => {
+                rl.question(pc.bold('? Apply canonical changes to repository? (Y/n) '), (answer) => {
                     rl.close();
                     resolve(answer.trim().toLowerCase() === 'y' || answer.trim() === '');
                 });
             });
 
             if (!proceed) {
-                console.log(pc.yellow('✖ Operação cancelada pelo usuário.'));
+                console.log(pc.yellow('✖ Operation cancelled by user.'));
                 return;
             }
 
             plan.isForced = !!options.force;
             applyMutationPlan(process.cwd(), plan);
-            console.log(pc.green('\n✔ Estado canônico atualizado com sucesso!'));
-            console.log(pc.dim('📋 Ledger de auditoria gravado em .ai-context/.pactx-history.json\n'));
+            console.log(pc.green('\n✔ Canonical state updated successfully!'));
+            console.log(pc.dim('📋 Audit ledger recorded in .ai-context/.pactx-history.json\n'));
 
         } catch (err: any) {
-            console.error(pc.red(`\n✖ Erro: ${err.message}\n`));
+            console.error(pc.red(`\n✖ Error: ${err.message}\n`));
             process.exit(1);
         }
     });

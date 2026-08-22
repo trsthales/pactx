@@ -7,7 +7,7 @@ export function initProject(cwd: string = process.cwd()): void {
     const decisionsDir = path.join(contextDir, 'decisions');
 
     if (fs.existsSync(contextDir)) {
-        console.log(pc.yellow('⚠ .ai-context já existe neste diretório.'));
+        console.log(pc.yellow('⚠ .ai-context already exists in this directory.'));
         return;
     }
 
@@ -17,16 +17,16 @@ export function initProject(cwd: string = process.cwd()): void {
         path.join(contextDir, 'project.md'),
         `---
 spec_version: "1.0"
-project: "Nome do Projeto"
+project: "Project Name"
 version: "0.1.0"
 stack: ["Node.js", "TypeScript", "PostgreSQL"]
 ---
-# Visão do Projeto
-Descreva brevemente o objetivo do sistema.
+# Project Vision
+Briefly describe the purpose of this system.
 
-# Regras Invioláveis
-1. Todo código novo deve conter testes de unidade.
-2. Nunca assuma causas de bugs sem evidências no runtime.
+# Invariant Rules
+1. All new code must include automated unit tests.
+2. Never assume root causes of bugs without runtime evidence.
 `
     );
 
@@ -39,25 +39,25 @@ active_task: "TASK-01"
 recommended_model: "Medium"
 status: "IN_PROGRESS"
 ---
-# Objetivo Atual
-Configuração da arquitetura base e validações.
+# Current Goal
+Initial architecture setup and core validations.
 
-# O que foi feito recentemente
-- [x] Inicialização do repositório.
+# Recently Completed
+- [x] Repository initialized.
 
-# Hipóteses Descartadas / Erros Conhecidos (NÃO REPETIR)
-- (Registre aqui o que você testou e não funcionou para a IA não tentar de novo)
+# Rejected Hypotheses / Known Errors (DO NOT RETRY)
+- (Record here what you tested and did not work so AI does not retry)
 
-# Próxima Ação Imediata
-Iniciar implementação do módulo principal.
+# Immediate Next Action
+Start implementing the main module.
 `
     );
 
     fs.writeFileSync(
         path.join(contextDir, 'glossary.md'),
-        `# Glossário & Contratos
-- **User**: Representa o usuário autenticado no sistema.
-- **Tenant**: Identificador da organização.
+        `# Glossary & Contracts
+- **User**: Represents an authenticated user in the system.
+- **Tenant**: Organization or school identifier.
 `
     );
 
@@ -65,18 +65,18 @@ Iniciar implementação do módulo principal.
         path.join(decisionsDir, 'DEC-001.md'),
         `---
 id: "DEC-001"
-title: "Decisão Arquitetural Inicial"
+title: "Initial Architectural Decision"
 status: "active"
 date: "${new Date().toISOString().split('T')[0]}"
 ---
-# Decisão
-Definida a stack base e estrutura modular.
+# Decision
+Base technology stack and modular structure defined.
 
-# Motivo
-Simplicidade e facilidade de manutenção no longo prazo.
+# Reason
+Simplicity, maintainability, and long-term developer ergonomics.
 `
     );
 
-    console.log(pc.green('✔ Estrutura .ai-context criada com sucesso!'));
-    console.log(pc.cyan('👉 Edite os arquivos em .ai-context/ e rode a ferramenta para copiar o contexto.'));
+    console.log(pc.green('✔ .ai-context structure initialized successfully!'));
+    console.log(pc.cyan("👉 Edit files in .ai-context/ and run 'npx pactx' to copy context."));
 }
