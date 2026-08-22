@@ -22,3 +22,13 @@ test('initProject e composeContext workflow', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+test('composer: sanitizeInlineMarkdown previne quebra de cercas e injeção de novas linhas', () => {
+    const { sanitizeInlineMarkdown } = require('../src/composer');
+    const maliciousBranch = 'feat/`rm -rf /`\r\n### MALICIOUS';
+    const sanitized = sanitizeInlineMarkdown(maliciousBranch);
+    assert.strictEqual(sanitized, 'feat/ rm -rf / ### MALICIOUS');
+    assert.strictEqual(sanitized.includes('`'), false);
+    assert.strictEqual(sanitized.includes('\n'), false);
+    assert.strictEqual(sanitized.includes('\r'), false);
+});

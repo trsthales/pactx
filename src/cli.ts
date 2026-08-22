@@ -61,6 +61,7 @@ program
     .description('Ingere a resposta da IA e atualiza o estado canônico do repositório')
     .option('--dry-run', 'Apenas simula e exibe o plano sem alterar arquivos no disco')
     .option('-y, --yes', 'Aplica as mutações sem confirmação interativa')
+    .option('--force', 'Força a aplicação mesmo em caso de avisos críticos (ex: Stale Context com -y)')
     .option('--file <path>', 'Lê o bloco pactx-update a partir de um arquivo')
     .option('--stdin', 'Lê o bloco a partir do stdin (pipe)')
     .action(async (options) => {
@@ -96,6 +97,15 @@ program
                 console.log(pc.bold(pc.yellow('⚠️ AVISOS:')));
                 plan.warnings.forEach(w => console.log(pc.yellow(`  • ${w}`)));
                 console.log('');
+            }
+
+            const hasStaleContext = plan.warnings.some(w => w.includes('Stale Context'));
+            if (options.yes && hasStaleContext && !options.force) {
+                console.error(pc.red('✖ Erro: Stale Context detectado com flag -y/--yes.'));
+                console.error(pc.yellow('  O update foi baseado em uma revisão desatualizada do repositório.'));
+                console.error(pc.yellow('  Para forçar a aplicação sem confirmação interativa, utilize:'));
+                console.error(pc.cyan('    pactx update -y --force\n'));
+                process.exit(1);
             }
 
             // Renderização do Plano em Texto Integral

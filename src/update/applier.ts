@@ -3,8 +3,49 @@ import path from 'node:path';
 import yaml from 'yaml';
 import { MutationPlan, HistoryLedger } from './types';
 
+const MAX_HISTORY_ENTRIES = 500;
+
+export function safeWriteFileSync(filePath: string, content: string, encoding: BufferEncoding = 'utf-8'): void {
+    try {
+        const stat = fs.lstatSync(filePath);
+        if (stat.isSymbolicLink()) {
+            throw new Error(`Violação de segurança: "${filePath}" é um link simbólico. Escrita recusada.`);
+        }
+    } catch (err: any) {
+        if (err.code !== 'ENOENT') {
+            throw err;
+        }
+    }
+    fs.writeFileSync(filePath, content, encoding);
+}
+
+export function sanitizeBodyField(val: string): string {
+    if (!val) return '';
+    return val
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .map(line => {
+            const trimmed = line.trim();
+            // Neutraliza cabeçalhos markdown (# a ######) transformando em blockquotes seguros
+            if (/^#{1,6}\s/.test(trimmed)) {
+                return line.replace(/^(\s*)#{1,6}\s*/, '$1> ');
+            }
+            // Remove réguas horizontais que possam quebrar a hierarquia do documento
+            if (/^[-*_]{3,}\s*$/.test(trimmed)) {
+                return '';
+            }
+            // Neutraliza cercas de código de bloco
+            if (/^`{3,}/.test(trimmed)) {
+                return line.replace(/`/g, "'");
+            }
+            return line;
+        })
+        .join('\n')
+        .trim();
+}
+
 function normalizeLine(line: string): string {
-    return line.replace(/^[-*•]\s*/, '').trim().toLowerCase();
+    return line.replace(/^[-*•]\s*/, '').trim().normalize('NFC').toLowerCase();
 }
 
 export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
@@ -26,8 +67,31 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
         }
     };
 
+    const rollback = () => {
+        for (const [filePath, origContent] of snapshot.entries()) {
+            try {
+                if (origContent === null) {
+                    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                } else {
+                    safeWriteFileSync(filePath, origContent, 'utf-8');
+                }
+            } catch {}
+        }
+    };
+
+    let isWriting = true;
+    const onSignal = () => {
+        if (isWriting) {
+            rollback();
+        }
+        process.exit(1);
+    };
+
+    process.on('SIGINT', onSignal);
+    process.on('SIGTERM', onSignal);
+
     try {
-        // 1. Criar Novos ADRs com Serialização Segura
+        // 1. Criar Novos ADRs com Serialização Segura & Sanitização de Body
         for (const adr of plan.operations.createdAdrs) {
             recordSnapshot(adr.targetPath);
             const frontmatter = {
@@ -39,10 +103,12 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             };
 
             const frontmatterYaml = yaml.stringify(frontmatter).trim();
-            const body = `# Decisão\n${adr.decision}\n\n# Motivo\n${adr.reason}\n`;
+            const sanitizedDecision = sanitizeBodyField(adr.decision);
+            const sanitizedReason = sanitizeBodyField(adr.reason);
+            const body = `# Decisão\n${sanitizedDecision}\n\n# Motivo\n${sanitizedReason}\n`;
             const fullContent = `---\n${frontmatterYaml}\n---\n\n${body}`;
 
-            fs.writeFileSync(adr.targetPath, fullContent, 'utf-8');
+            safeWriteFileSync(adr.targetPath, fullContent, 'utf-8');
             if (snapshot.get(adr.targetPath) === null) {
                 createdFiles.push(adr.targetPath);
             }
@@ -54,20 +120,22 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
                 recordSnapshot(adr.targetPath);
                 const original = fs.readFileSync(adr.targetPath, 'utf-8');
 
-                // Parse seguro do frontmatter existente
-                const match = original.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+                // Parse seguro do frontmatter existente com suporte a CRLF
+                const match = original.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
                 if (match) {
                     const data = yaml.parse(match[1]) || {};
                     data.status = 'superseded';
                     data.superseded_by = adr.supersededBy;
                     data.superseded_date = adr.date;
                     if (adr.reason) {
-                        data.superseded_reason = adr.reason;
+                        data.superseded_reason = sanitizeBodyField(adr.reason);
                     }
 
                     const newFrontmatter = yaml.stringify(data).trim();
                     const newContent = `---\n${newFrontmatter}\n---\n${match[2]}`;
-                    fs.writeFileSync(adr.targetPath, newContent, 'utf-8');
+                    safeWriteFileSync(adr.targetPath, newContent, 'utf-8');
+                } else {
+                    throw new Error(`Estrutura de frontmatter inválida ou corrompida no ADR: ${adr.targetPath}`);
                 }
             }
         }
@@ -80,20 +148,40 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             let existingCompleted: string[] = [];
             let existingHypotheses: string[] = [];
             let existingFacts: string[] = [];
+            let existingSprint = 'SPRINT_CURRENT';
+
+            const isPlaceholder = (s: string) => /^\([^)]+\)$/.test(s.trim());
 
             if (fs.existsSync(statePath)) {
                 const raw = fs.readFileSync(statePath, 'utf-8');
-                const lines = raw.split('\n');
+
+                // Preserva sprint existente se presente no frontmatter
+                const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+                if (fmMatch) {
+                    try {
+                        const existingFm = yaml.parse(fmMatch[1]);
+                        if (existingFm && existingFm.sprint) {
+                            existingSprint = String(existingFm.sprint);
+                        }
+                    } catch {}
+                }
+
+                const lines = raw.split(/\r?\n/);
                 let currentSection = '';
 
                 for (const line of lines) {
-                    if (line.startsWith('# O que foi feito')) currentSection = 'completed';
-                    else if (line.startsWith('# Hipóteses Descartadas')) currentSection = 'hypotheses';
-                    else if (line.startsWith('# Fatos & Descobertas')) currentSection = 'facts';
-                    else if (line.startsWith('# ')) currentSection = 'other';
-                    else if (line.trim().startsWith('-')) {
+                    const sectionLine = line.replace(/^#+\s*/, '').trim().toLowerCase();
+                    if (sectionLine.startsWith('o que foi feito')) {
+                        currentSection = 'completed';
+                    } else if (sectionLine.startsWith('hipóteses descartadas') || sectionLine.startsWith('hipoteses descartadas')) {
+                        currentSection = 'hypotheses';
+                    } else if (sectionLine.startsWith('fatos') || sectionLine.startsWith('fatos &') || sectionLine.startsWith('fatos e')) {
+                        currentSection = 'facts';
+                    } else if (/^#+\s/.test(line.trim())) {
+                        currentSection = 'other';
+                    } else if (line.trim().startsWith('-')) {
                         const clean = line.replace(/^-\s*(\[[ x]\])?\s*/, '').trim();
-                        if (clean) {
+                        if (clean && !isPlaceholder(clean)) {
                             if (currentSection === 'completed') existingCompleted.push(clean);
                             if (currentSection === 'hypotheses') existingHypotheses.push(clean);
                             if (currentSection === 'facts') existingFacts.push(clean);
@@ -106,9 +194,11 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             const mergeUnique = (existing: string[], incoming: string[]) => {
                 const result = [...existing];
                 for (const item of incoming) {
-                    const norm = normalizeLine(item);
+                    const sanitized = sanitizeBodyField(item);
+                    if (!sanitized) continue;
+                    const norm = normalizeLine(sanitized);
                     if (!result.some(e => normalizeLine(e) === norm)) {
-                        result.push(item);
+                        result.push(sanitized);
                     }
                 }
                 return result;
@@ -120,14 +210,17 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
             const frontmatter = {
                 spec_version: '1.0',
-                sprint: 'SPRINT_CURRENT',
+                sprint: existingSprint,
                 active_task: plan.operations.stateUpdate.activeTask,
                 recommended_model: plan.operations.stateUpdate.recommendedModel,
                 status: plan.operations.stateUpdate.status,
             };
 
             const stateFrontmatter = yaml.stringify(frontmatter).trim();
-            let stateBody = `# Objetivo Atual\n${plan.operations.stateUpdate.activeTask}\n\n`;
+            const sanitizedActiveTask = sanitizeBodyField(plan.operations.stateUpdate.activeTask);
+            const sanitizedNextAction = sanitizeBodyField(plan.operations.stateUpdate.nextAction);
+
+            let stateBody = `# Objetivo Atual\n${sanitizedActiveTask}\n\n`;
 
             stateBody += `# O que foi feito recentemente\n`;
             stateBody += finalCompleted.length > 0 ? finalCompleted.map(c => `- [x] ${c}`).join('\n') + '\n\n' : `- (Nenhum item)\n\n`;
@@ -140,9 +233,9 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             stateBody += `# Hipóteses Descartadas / Erros Conhecidos (NÃO REPETIR)\n`;
             stateBody += finalHypotheses.length > 0 ? finalHypotheses.map(h => `- ${h}`).join('\n') + '\n\n' : `- (Nenhuma)\n\n`;
 
-            stateBody += `# Próxima Ação Imediata\n${plan.operations.stateUpdate.nextAction || '(Definir próxima ação)'}\n`;
+            stateBody += `# Próxima Ação Imediata\n${sanitizedNextAction || '(Definir próxima ação)'}\n`;
 
-            fs.writeFileSync(statePath, `---\n${stateFrontmatter}\n---\n\n${stateBody}`, 'utf-8');
+            safeWriteFileSync(statePath, `---\n${stateFrontmatter}\n---\n\n${stateBody}`, 'utf-8');
         }
 
         // 4. Append ao glossary.md
@@ -152,14 +245,17 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
             let content = fs.existsSync(glossaryPath) ? fs.readFileSync(glossaryPath, 'utf-8').trim() : '# Glossário & Contratos';
             for (const term of plan.operations.appendedGlossaryTerms) {
-                if (!content.includes(`**${term.term}**`)) {
-                    content += `\n- **${term.term}**: ${term.definition}`;
+                const normalizedTerm = term.term.trim();
+                const sanitizedDefinition = sanitizeBodyField(term.definition.trim());
+                if (!content.includes(`**${normalizedTerm}**`)) {
+                    content += `\n- **${normalizedTerm}**: ${sanitizedDefinition}`;
                 }
             }
-            fs.writeFileSync(glossaryPath, content + '\n', 'utf-8');
+            safeWriteFileSync(glossaryPath, content + '\n', 'utf-8');
         }
 
-        // 5. Atualizar o Ledger de Histórico
+        // 5. Atualizar o Ledger de Histórico com Limite de Entradas
+        recordSnapshot(historyFile);
         let ledger: HistoryLedger = { version: '1.0', applied_updates: [] };
         if (fs.existsSync(historyFile)) {
             try {
@@ -177,17 +273,20 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             superseded_adrs: plan.operations.supersededAdrs.map(a => a.id),
         });
 
-        fs.writeFileSync(historyFile, JSON.stringify(ledger, null, 2), 'utf-8');
+        // Limita o histórico às últimas MAX_HISTORY_ENTRIES entradas
+        if (ledger.applied_updates.length > MAX_HISTORY_ENTRIES) {
+            ledger.applied_updates = ledger.applied_updates.slice(-MAX_HISTORY_ENTRIES);
+        }
+
+        safeWriteFileSync(historyFile, JSON.stringify(ledger, null, 2), 'utf-8');
 
     } catch (error: any) {
         // FAIL-CLOSED: Rollback Transacional Instantâneo
-        for (const [filePath, origContent] of snapshot.entries()) {
-            if (origContent === null) {
-                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-            } else {
-                fs.writeFileSync(filePath, origContent, 'utf-8');
-            }
-        }
+        rollback();
         throw new Error(`Falha transacional durante a escrita. Rollback executado com sucesso. Causa: ${error.message}`);
+    } finally {
+        isWriting = false;
+        process.removeListener('SIGINT', onSignal);
+        process.removeListener('SIGTERM', onSignal);
     }
 }
