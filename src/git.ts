@@ -16,8 +16,14 @@ export function getGitState(): GitState {
 
     const branch = execSync('git branch --show-current', { encoding: 'utf-8' }).trim();
 
-    const rawCommits = execSync('git log -n 3 --oneline', { encoding: 'utf-8' }).trim();
-    const recentCommits = rawCommits ? rawCommits.split('\n') : [];
+    let recentCommits: string[] = [];
+    try {
+        // Falha com erro fatal em repositórios sem nenhum commit ainda (HEAD inexistente)
+        const rawCommits = execSync('git log -n 3 --oneline', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        recentCommits = rawCommits ? rawCommits.split('\n') : [];
+    } catch {
+        recentCommits = [];
+    }
 
     const rawStatus = execSync('git status --short', { encoding: 'utf-8' }).trim();
     const modifiedFiles = rawStatus ? rawStatus.split('\n').map((line: string) => line.trim()) : [];
