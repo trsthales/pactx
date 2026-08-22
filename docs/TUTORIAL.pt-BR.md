@@ -10,7 +10,7 @@ Este tutorial demonstra como utilizar o `pactx` no seu fluxo de desenvolvimento 
 
 - **Node.js**: v18.0.0 ou superior (`node -v`)
 - **Git**: Instalado e inicializado no repositório do seu projeto
-- **Nenhuma instalação global necessária**: Execute diretamente via `npx pactx`
+- **Nenhuma instalação global necessária**: Execute diretamente via `npx @trsthales/pactx`
 
 ---
 
@@ -19,13 +19,13 @@ Este tutorial demonstra como utilizar o `pactx` no seu fluxo de desenvolvimento 
 Na pasta raiz do seu projeto, execute:
 
 ```bash
-npx pactx init
+npx @trsthales/pactx init
 ```
 
 Saída:
 ```text
-✔ Estrutura .ai-context criada com sucesso!
-👉 Edite os arquivos em .ai-context/ e rode a ferramenta para copiar o contexto.
+✔ .ai-context structure initialized successfully!
+👉 Edit files in .ai-context/ and run 'npx @trsthales/pactx' to copy context.
 ```
 
 Isso cria a pasta canônica `.ai-context/` no seu projeto:
@@ -91,16 +91,16 @@ Criar schema Zod e controller para rota POST /auth/student-pin.
 Sempre que for iniciar um novo chat com IA ou alinhar uma sessão existente, execute:
 
 ```bash
-npx pactx
+npx @trsthales/pactx
 ```
 
 Saída:
 ```text
-✔ Context packed com sucesso!
-📋 Copiado para a Área de Transferência!
-Tamanho: 1.45 KB | ~380 tokens
+✔ Context packed successfully!
+📋 Copied to clipboard!
+Size: 1.45 KB | ~380 tokens
 
-👉 Cole diretamente no ChatGPT, Claude, Gemini ou no seu agente!
+👉 Paste directly into ChatGPT, Claude, Gemini, or your coding agent!
 ```
 
 ### O que aconteceu nos bastidores?
@@ -112,12 +112,12 @@ Tamanho: 1.45 KB | ~380 tokens
 ### Flags Úteis de Empacotamento
 - **Modo Compacto (`--short`):**
   ```bash
-  npx pactx --short
+  npx @trsthales/pactx --short
   ```
   Omite o glossário e decisões obsoletas para caber em janelas de tokens restritas.
 - **Redirecionamento / Pipe (`--stdout`):**
   ```bash
-  npx pactx --stdout > contexto.md
+  npx @trsthales/pactx --stdout > contexto.md
   ```
   Imprime o Markdown diretamente no terminal sem alterar a área de transferência.
 
@@ -189,32 +189,32 @@ new_glossary_terms:
 Copie a resposta da IA e execute no seu terminal:
 
 ```bash
-npx pactx update
+npx @trsthales/pactx update
 ```
 
 O `pactx` exibirá o **Plano de Mutação em Texto Integral**:
 
 ```text
-📦 Bloco pactx-update detectado!
+📦 pactx-update block detected!
 
-Plano de Mutação Canônica:
+Canonical Mutation Plan:
 ────────────────────────────────────────────────────────────────────────────
 📝 .ai-context/state.md
-   • Tarefa Ativa: "TASK-01 Autenticação de Alunos via PIN" [COMPLETED]
-   • Próximo Passo: "Iniciar TASK-02: Tela de login de alunos no frontend"
-   • [+] Fato: "Rate limit de login por PIN configurado para 5 tentativas por minuto"
-   • [+] Hipótese Descartada: "Bcrypt com alto custo de CPU é desnecessário para PINs de 4 dígitos; PBKDF2 foi adotado"
+   • Active Task: "TASK-01 Autenticação de Alunos via PIN" [COMPLETED]
+   • Next Action: "Iniciar TASK-02: Tela de login de alunos no frontend"
+   • [+] Fact: "Rate limit de login por PIN configurado para 5 tentativas por minuto"
+   • [+] Discarded Hypothesis: "Bcrypt com alto custo de CPU é desnecessário para PINs de 4 dígitos; PBKDF2 foi adotado"
 🏛️  .ai-context/decisions/DEC-002.md [CREATE]
-   • Título: "Hashing de PIN Numérico com PBKDF2"
-   • Decisão: "Utilizar PBKDF2 com 100.000 iterações e salt criptográfico individual"
+   • Title: "Hashing de PIN Numérico com PBKDF2"
+   • Decision: "Utilizar PBKDF2 com 100.000 iterações e salt criptográfico individual"
 📖 .ai-context/glossary.md [APPEND]
    • StudentPIN: "Código numérico de 4 dígitos atribuído ao aluno para login rápido em sala de aula"
 ────────────────────────────────────────────────────────────────────────────
 
-? Deseja aplicar as alterações canônicas ao repositório? (Y/n) y
+? Apply canonical changes to repository? (Y/n) y
 
-✔ Estado canônico atualizado com sucesso!
-📋 Ledger de auditoria gravado em .ai-context/.pactx-history.json
+✔ Canonical state updated successfully!
+📋 Audit ledger recorded in .ai-context/.pactx-history.json
 ```
 
 Pressione `Enter` ou digite `y`.
@@ -237,7 +237,7 @@ git commit -m "feat(auth): implementar login de aluno via PIN e registrar DEC-00
 git push origin feat/student-auth
 ```
 
-Dessa forma, qualquer colega de equipe (ou outra IA em um novo chat) que fizer checkout da sua branch e rodar `npx pactx` herdará instantaneamente o estado exato e atualizado do projeto!
+Dessa forma, qualquer colega de equipe (ou outra IA em um novo chat) que fizer checkout da sua branch e rodar `npx @trsthales/pactx` herdará instantaneamente o estado exato e atualizado do projeto!
 
 ---
 
@@ -247,28 +247,28 @@ Dessa forma, qualquer colega de equipe (ou outra IA em um novo chat) que fizer c
 Se outro desenvolvedor fez alterações no `.ai-context/` enquanto seu chat estava aberto, o `pactx` detecta a divergência:
 
 ```text
-⚠️ AVISOS:
-  • Stale Context: A base_revision do payload difere da revisão canônica atual do repositório.
+⚠️ WARNINGS:
+  • Stale Context: The update was based on revision "7a9f1b2c3d4e5f60", but the current repository is at revision "8b0e2c3d4e5f6a12".
 ```
 - No modo interativo: Revise o plano e confirme com `Y` caso não haja conflito semântico.
 - No modo automatizado/scripts (`-y`): Use `--force` para confirmar a aplicação intencional:
   ```bash
-  npx pactx update -y --force
+  npx @trsthales/pactx update -y --force
   ```
 
 ### 2. Automação em Scripts ou CI via `--stdin` e `--file`
 Você pode enviar blocos de handoff diretamente via pipe:
 
 ```bash
-cat resposta_handoff.md | npx pactx update --stdin -y
+cat resposta_handoff.md | npx @trsthales/pactx update --stdin -y
 ```
 Ou ler de um arquivo específico:
 ```bash
-npx pactx update --file ./handoff.md -y
+npx @trsthales/pactx update --file ./handoff.md -y
 ```
 
 ### 3. Simulação sem Gravação (`--dry-run`)
 Para validar o plano de mutação sem alterar nenhum arquivo:
 ```bash
-npx pactx update --dry-run
+npx @trsthales/pactx update --dry-run
 ```

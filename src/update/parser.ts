@@ -56,7 +56,12 @@ export function extractPactxBlock(content: string): string {
         } catch {
             // continua para lançar erro padronizado
         }
-        throw new Error('No valid ```pactx-update``` block was found in the provided input.\n\n👉 Tip: Ask your AI in chat: "/handoff" (or "Generate the pactx-update block") and copy its response before running \'pactx update\'.');
+        throw new Error(
+            'No valid ```pactx-update``` block was found in the provided clipboard/content.\n\n' +
+            '👉 Tip: Ask your AI in chat:\n' +
+            '   "/handoff" (or "Generate the pactx-update block for this session")\n' +
+            '   and copy its response before running \'pactx update\'.'
+        );
     }
     return match[1].trim();
 }

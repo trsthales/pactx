@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { initProject } from '../src/init';
-import { parseAndValidateUpdate, computeCanonicalHash } from '../src/update/parser';
+import { parseAndValidateUpdate, computeCanonicalHash, extractPactxBlock } from '../src/update/parser';
 import { buildMutationPlan } from '../src/update/planner';
 import { applyMutationPlan, sanitizeBodyField, safeWriteFileSync, safeAtomicWriteFileSync } from '../src/update/applier';
 import { ContextLock } from '../src/update/lock';
@@ -1217,4 +1217,15 @@ state:
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+});
+
+test('Parser: Lança mensagem de erro acionável com dica de /handoff quando o bloco não for encontrado', () => {
+    const invalidInput = 'Texto comum sem bloco de código';
+    assert.throws(() => {
+        extractPactxBlock(invalidInput);
+    }, /No valid ```pactx-update``` block was found in the provided clipboard\/content/);
+
+    assert.throws(() => {
+        extractPactxBlock(invalidInput);
+    }, /\/handoff/);
 });
