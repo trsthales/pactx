@@ -15,7 +15,20 @@ function getNextAdrId(decisionsDir: string): string {
         }
     }
     const next = maxNum + 1;
+    if (next > 9999) {
+        throw new Error('Limite de identificadores de decisão atingido (DEC-9999).');
+    }
     return `DEC-${next.toString().padStart(3, '0')}`;
+}
+
+function assertInsideDirectory(parentDir: string, targetPath: string, entityName: string): void {
+    const resolvedParent = path.resolve(parentDir);
+    const resolvedTarget = path.resolve(targetPath);
+    const relative = path.relative(resolvedParent, resolvedTarget);
+
+    if (relative.startsWith('..') || path.isAbsolute(relative) || relative === '') {
+        throw new Error(`Violação de segurança (Path Traversal): Tentativa de acesso fora de ${parentDir} para ${entityName}`);
+    }
 }
 
 export function buildMutationPlan(
@@ -75,10 +88,11 @@ export function buildMutationPlan(
     const today = new Date().toISOString().split('T')[0];
 
     // 3. Planejamento de Novos ADRs & Detecção de Colisão
+    const allocatedIds = new Set<string>();
     let currentNextNum = 0;
     if (payload.new_decisions && Array.isArray(payload.new_decisions)) {
         for (const d of payload.new_decisions) {
-            let adrId = d.id;
+            let adrId = d.id ? String(d.id).trim() : '';
             if (!adrId || adrId.toLowerCase() === 'auto') {
                 if (currentNextNum === 0) {
                     const nextStr = getNextAdrId(decisionsDir);
@@ -86,8 +100,20 @@ export function buildMutationPlan(
                 } else {
                     currentNextNum++;
                 }
+                while (
+                    allocatedIds.has(`DEC-${currentNextNum.toString().padStart(3, '0')}`) ||
+                    fs.existsSync(path.resolve(decisionsDir, `DEC-${currentNextNum.toString().padStart(3, '0')}.md`))
+                ) {
+                    currentNextNum++;
+                }
+                if (currentNextNum > 9999) {
+                    throw new Error('Limite de identificadores de decisão atingido (DEC-9999).');
+                }
                 adrId = `DEC-${currentNextNum.toString().padStart(3, '0')}`;
             } else {
+                if (allocatedIds.has(adrId)) {
+                    throw new Error(`Conflito: A decisão ${adrId} foi declarada mais de uma vez no mesmo lote.`);
+                }
                 // ID explícito: verifica se já existe para evitar sobrescrita acidental
                 const existingPath = path.resolve(decisionsDir, `${adrId}.md`);
                 if (fs.existsSync(existingPath)) {
@@ -95,10 +121,9 @@ export function buildMutationPlan(
                 }
             }
 
+            allocatedIds.add(adrId);
             const targetPath = path.resolve(decisionsDir, `${adrId}.md`);
-            if (!targetPath.startsWith(path.resolve(contextDir))) {
-                throw new Error(`Violação de segurança (Path Traversal) para o ADR ${adrId}`);
-            }
+            assertInsideDirectory(decisionsDir, targetPath, `ADR ${adrId}`);
 
             plan.operations.createdAdrs.push({
                 id: adrId,
@@ -114,10 +139,13 @@ export function buildMutationPlan(
     // 4. Planejamento de ADRs Substituídos & Validação Semântica
     if (payload.superseded_decisions && Array.isArray(payload.superseded_decisions)) {
         for (const s of payload.superseded_decisions) {
-            const targetPath = path.resolve(decisionsDir, `${s.id}.md`);
-            if (!targetPath.startsWith(path.resolve(contextDir))) {
-                throw new Error(`Violação de segurança (Path Traversal) para o ADR ${s.id}`);
+            // Conflito Intra-Lote: Impede que um ADR seja criado e substituído no mesmo lote (P2-07)
+            if (allocatedIds.has(s.id)) {
+                throw new Error(`Conflito lógico: A decisão ${s.id} não pode ser criada e substituída (superseded) no mesmo lote.`);
             }
+
+            const targetPath = path.resolve(decisionsDir, `${s.id}.md`);
+            assertInsideDirectory(decisionsDir, targetPath, `ADR ${s.id}`);
 
             // Validação Semântica: O ADR a ser substituído PRECISA existir
             if (!fs.existsSync(targetPath)) {

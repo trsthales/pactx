@@ -7,15 +7,21 @@ export interface PackOptions {
     short?: boolean;
 }
 
+export function sanitizeInlineMarkdown(val: string): string {
+    return val.replace(/[`\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function parseFrontmatterValue(content: string, key: string): string {
-    const match = content.match(new RegExp(`^${key}:\\s*["']?([^"'\\n]+)["']?`, 'm'));
+    const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!fmMatch) return '';
+    const match = fmMatch[1].match(new RegExp(`^${key}:\\s*["']?([^"'\\r\\n]+)["']?`, 'm'));
     return match ? match[1].trim() : '';
 }
 
 export function getCurrentContextRevision(contextDir: string): string {
     const readFileSafe = (relPath: string) => {
         const full = path.join(contextDir, relPath);
-        return fs.existsSync(full) ? fs.readFileSync(full, 'utf-8').trim() : '';
+        return fs.existsSync(full) ? fs.readFileSync(full, 'utf-8').replace(/\r\n/g, '\n').trim() : '';
     };
 
     const projectContent = readFileSafe('project.md');
@@ -26,7 +32,7 @@ export function getCurrentContextRevision(contextDir: string): string {
     if (fs.existsSync(decisionsDir)) {
         const files = (fs.readdirSync(decisionsDir) as string[]).filter(f => f.endsWith('.md')).sort();
         for (const f of files) {
-            decisions.push(fs.readFileSync(path.join(decisionsDir, f), 'utf-8').trim());
+            decisions.push(fs.readFileSync(path.join(decisionsDir, f), 'utf-8').replace(/\r\n/g, '\n').trim());
         }
     }
 
@@ -70,7 +76,7 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
         }
     }
 
-    const git = getGitState();
+    const git = getGitState(cwd);
     const contextRevisionHash = getCurrentContextRevision(contextDir);
 
     let out = `<!-- CONTEXT PACK: GERADO AUTOMATICAMENTE POR PACTX [rev: ${contextRevisionHash}] -->\n\n`;
@@ -101,12 +107,12 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
 
     if (git.isGit) {
         out += `### 5. RUNTIME & REPOSITÓRIO LOCAL\n`;
-        out += `- **Branch Git Atual:** \`${git.branch}\`\n`;
+        out += `- **Branch Git Atual:** \`${sanitizeInlineMarkdown(git.branch || 'detached')}\`\n`;
         if (git.recentCommits.length > 0) {
-            out += `- **Últimos Commits:**\n  ` + git.recentCommits.map((c: string) => `* ${c}`).join('\n  ') + `\n`;
+            out += `- **Últimos Commits:**\n  ` + git.recentCommits.map((c: string) => `* ${sanitizeInlineMarkdown(c)}`).join('\n  ') + `\n`;
         }
         if (git.modifiedFiles.length > 0) {
-            out += `- **Arquivos Modificados Localmente:**\n  ` + git.modifiedFiles.slice(0, 10).map((m: string) => `* \`${m}\``).join('\n  ') + `\n`;
+            out += `- **Arquivos Modificados Localmente:**\n  ` + git.modifiedFiles.slice(0, 10).map((m: string) => `* \`${sanitizeInlineMarkdown(m)}\``).join('\n  ') + `\n`;
         }
         out += `\n`;
     }
