@@ -4,9 +4,11 @@ import { RawUpdatePayload } from './types';
 
 const ADR_ID_REGEX = /^(auto|DEC-\d{3,4})$/i;
 
+// Padrões mais flexíveis e resilientes para Prompt Injection Heuristics
 const SUSPICIOUS_PATTERNS = [
-    /ignore\s+(previous|all)\s+instructions/i,
+    /(?:ignore|disregard|forget|bypass|override)\s+(?:all\s+)?(?:previous|prior|above|system)?\s*(?:instructions|prompts?|rules|directives)/i,
     /system\s+prompt\s+override/i,
+    /(?:rm\s+-rf|curl\s+.*\|\s*sh|chmod\s+777|format\s+c:)/i,
     /###\s*SYSTEM/i,
 ];
 
@@ -19,14 +21,13 @@ export interface ParseResult {
 export function extractPactxBlock(content: string): string {
     const match = content.match(/```(?:pactx-update|yaml:pactx-update)\s*\n([\s\S]*?)\n```/i);
     if (!match) {
-        // Tenta também se o payload for fornecido como YAML direto sem fences
         try {
             const parsed = yaml.parse(content);
             if (parsed && typeof parsed === 'object' && parsed.version) {
                 return content;
             }
         } catch {
-            // Ignora erro e lança exceção padronizada abaixo
+            // continua para lançar erro padronizado
         }
         throw new Error('Nenhum bloco ```pactx-update``` válido foi encontrado no conteúdo fornecido.');
     }
@@ -68,7 +69,7 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
 
     const warnings: string[] = [];
 
-    // Validação de Segurança dos Identificadores de ADR (Path Traversal Jail)
+    // 1. Validação de Segurança dos Identificadores de ADR (Path Traversal Jail)
     if (parsed.new_decisions && Array.isArray(parsed.new_decisions)) {
         for (const d of parsed.new_decisions) {
             if (d.id && !ADR_ID_REGEX.test(d.id.trim())) {
@@ -88,24 +89,26 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
         }
     }
 
-    // Scanner Heurístico Anti-Poisoning
-    const checkText = (val: string, location: string) => {
-        if (typeof val !== 'string') return;
-        for (const pattern of SUSPICIOUS_PATTERNS) {
-            if (pattern.test(val)) {
-                warnings.push(`Conteúdo suspeito detectado em [${location}]: padrão "${pattern.source}" encontrado.`);
+    // 2. Scanner Heurístico Universal Recursivo (Varre 100% dos campos de texto do payload)
+    const scanRecursively = (node: any, currentPath: string = '') => {
+        if (typeof node === 'string') {
+            for (const pattern of SUSPICIOUS_PATTERNS) {
+                if (pattern.test(node)) {
+                    warnings.push(`Padrão suspeito detectado em [${currentPath}]: "${node.substring(0, 60)}..."`);
+                    break;
+                }
+            }
+        } else if (Array.isArray(node)) {
+            node.forEach((item, index) => scanRecursively(item, `${currentPath}[${index}]`));
+        } else if (node && typeof node === 'object') {
+            for (const [key, value] of Object.entries(node)) {
+                const nextPath = currentPath ? `${currentPath}.${key}` : key;
+                scanRecursively(value, nextPath);
             }
         }
     };
 
-    if (parsed.state) {
-        if (parsed.state.rejected_hypotheses) {
-            parsed.state.rejected_hypotheses.forEach((h: string) => checkText(h, 'state.rejected_hypotheses'));
-        }
-        if (parsed.state.new_facts) {
-            parsed.state.new_facts.forEach((f: string) => checkText(f, 'state.new_facts'));
-        }
-    }
+    scanRecursively(parsed);
 
     const canonicalHash = computeCanonicalHash(parsed);
 

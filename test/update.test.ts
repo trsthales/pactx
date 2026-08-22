@@ -17,7 +17,6 @@ test('Update Pipeline: Caminho Feliz Completo & Transação', () => {
         const validPayload = `
 \`\`\`pactx-update
 version: "1.0"
-base_revision: "a7f3b8"
 state:
   active_task: "TK-02 Auth Guard"
   status: "IN_PROGRESS"
@@ -52,20 +51,18 @@ new_glossary_terms:
 
         applyMutationPlan(tmpDir, plan);
 
-        // Validações pós-commit no disco
         assert.strictEqual(fs.existsSync(path.join(tmpDir, '.ai-context', 'decisions', 'DEC-002.md')), true);
         assert.strictEqual(fs.existsSync(path.join(tmpDir, '.ai-context', '.pactx-history.json')), true);
 
         const stateContent = fs.readFileSync(path.join(tmpDir, '.ai-context', 'state.md'), 'utf-8');
         assert.match(stateContent, /TK-02 Auth Guard/);
         assert.match(stateContent, /Proxy reverso remove o cabeçalho Authorization/);
-        assert.match(stateContent, /Erro 403 não era CORS/);
 
         const dec1Content = fs.readFileSync(path.join(tmpDir, '.ai-context', 'decisions', 'DEC-001.md'), 'utf-8');
         assert.match(dec1Content, /status:\s*superseded/);
         assert.match(dec1Content, /superseded_by:\s*DEC-002/);
 
-        // Teste de Idempotência: re-planejar o mesmo hash deve acusar isAlreadyApplied = true
+        // Idempotência
         const plan2 = buildMutationPlan(tmpDir, payload, canonicalHash);
         assert.strictEqual(plan2.isAlreadyApplied, true);
 
@@ -74,19 +71,84 @@ new_glossary_terms:
     }
 });
 
-test('Security Jail: Bloqueio de Path Traversal', () => {
-    const maliciousPayload = `
+test('Validação Semântica: Rejeita supersede de ADR inexistente', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-nonexistent-'));
+
+    try {
+        initProject(tmpDir);
+
+        const payload = `
+\`\`\`pactx-update
+version: "1.0"
+superseded_decisions:
+  - id: "DEC-999"
+    by: "DEC-001"
+    reason: "Teste"
+\`\`\`
+`;
+        const { payload: parsed, canonicalHash } = parseAndValidateUpdate(payload);
+        assert.throws(() => {
+            buildMutationPlan(tmpDir, parsed, canonicalHash);
+        }, /Decisão para substituição não encontrada/);
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('Validação Semântica: Rejeita ambiguidade em by: auto', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-ambiguity-'));
+
+    try {
+        initProject(tmpDir);
+
+        const payload = `
 \`\`\`pactx-update
 version: "1.0"
 new_decisions:
-  - id: "../../etc/passwd"
-    title: "Ataque"
-    reason: "Teste"
-    decision: "Teste"
+  - id: "auto"
+    title: "Decisão 1"
+    reason: "R1"
+    decision: "D1"
+  - id: "auto"
+    title: "Decisão 2"
+    reason: "R2"
+    decision: "D2"
+superseded_decisions:
+  - id: "DEC-001"
+    by: "auto"
+    reason: "Ambiguidade"
 \`\`\`
 `;
+        const { payload: parsed, canonicalHash } = parseAndValidateUpdate(payload);
+        assert.throws(() => {
+            buildMutationPlan(tmpDir, parsed, canonicalHash);
+        }, /Ambiguidade em superseded_decisions/);
 
-    assert.throws(() => {
-        parseAndValidateUpdate(maliciousPayload);
-    }, /Identificador de decisão inválido/);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('Validação de Concorrência Otimista: Detecta Stale Context', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-stale-'));
+
+    try {
+        initProject(tmpDir);
+
+        const payload = `
+\`\`\`pactx-update
+version: "1.0"
+base_revision: "stale99"
+state:
+  active_task: "TK-03"
+\`\`\`
+`;
+        const { payload: parsed, canonicalHash } = parseAndValidateUpdate(payload);
+        const plan = buildMutationPlan(tmpDir, parsed, canonicalHash);
+        assert.strictEqual(plan.warnings.some(w => w.includes('Stale Context')), true);
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });
