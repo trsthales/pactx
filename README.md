@@ -5,6 +5,7 @@
 > Keep your AI aligned across chats, models, and sessions without context degradation or manual state maintenance.
 
 [![npm version](https://img.shields.io/npm/v/pactx.svg)](https://www.npmjs.com/package/pactx)
+[![CI](https://github.com/trsthales/pactx/actions/workflows/ci.yml/badge.svg)](https://github.com/trsthales/pactx/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---

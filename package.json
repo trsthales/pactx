@@ -24,6 +24,14 @@
   ],
   "author": "",
   "license": "MIT",
+  "homepage": "https://github.com/trsthales/pactx#readme",
+  "bugs": {
+    "url": "https://github.com/trsthales/pactx/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trsthales/pactx.git"
+  },
   "type": "commonjs",
   "dependencies": {
     "clipboardy": "^5.3.2",
