@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { RawUpdatePayload, MutationPlan, HistoryLedger } from './types';
+import { getCurrentContextRevision } from '../composer';
 
 function getNextAdrId(decisionsDir: string): string {
     if (!fs.existsSync(decisionsDir)) return 'DEC-001';
@@ -33,7 +34,15 @@ export function buildMutationPlan(
 
     const warnings = [...initialWarnings];
 
-    // 1. Verificação de Idempotência no Ledger
+    // 1. Validação de Concorrência Otimista (base_revision vs current_revision)
+    if (payload.base_revision) {
+        const currentRev = getCurrentContextRevision(contextDir);
+        if (payload.base_revision !== currentRev) {
+            warnings.push(`Stale Context: O update foi baseado na revisão "${payload.base_revision}", mas o repositório atual está na revisão "${currentRev}".`);
+        }
+    }
+
+    // 2. Verificação de Idempotência no Ledger
     let isAlreadyApplied = false;
     if (fs.existsSync(historyFile)) {
         try {
@@ -42,7 +51,6 @@ export function buildMutationPlan(
                 isAlreadyApplied = true;
             }
         } catch {
-            // Se o ledger estiver corrompido, emite warning mas não bloqueia
             warnings.push('Não foi possível ler o arquivo .pactx-history.json.');
         }
     }
@@ -66,7 +74,7 @@ export function buildMutationPlan(
 
     const today = new Date().toISOString().split('T')[0];
 
-    // 2. Planejamento de Novos ADRs
+    // 3. Planejamento de Novos ADRs & Detecção de Colisão
     let currentNextNum = 0;
     if (payload.new_decisions && Array.isArray(payload.new_decisions)) {
         for (const d of payload.new_decisions) {
@@ -79,6 +87,12 @@ export function buildMutationPlan(
                     currentNextNum++;
                 }
                 adrId = `DEC-${currentNextNum.toString().padStart(3, '0')}`;
+            } else {
+                // ID explícito: verifica se já existe para evitar sobrescrita acidental
+                const existingPath = path.resolve(decisionsDir, `${adrId}.md`);
+                if (fs.existsSync(existingPath)) {
+                    throw new Error(`Conflito: A decisão ${adrId} já existe no repositório.`);
+                }
             }
 
             const targetPath = path.resolve(decisionsDir, `${adrId}.md`);
@@ -97,7 +111,7 @@ export function buildMutationPlan(
         }
     }
 
-    // 3. Planejamento de ADRs Substituídos
+    // 4. Planejamento de ADRs Substituídos & Validação Semântica
     if (payload.superseded_decisions && Array.isArray(payload.superseded_decisions)) {
         for (const s of payload.superseded_decisions) {
             const targetPath = path.resolve(decisionsDir, `${s.id}.md`);
@@ -105,9 +119,20 @@ export function buildMutationPlan(
                 throw new Error(`Violação de segurança (Path Traversal) para o ADR ${s.id}`);
             }
 
+            // Validação Semântica: O ADR a ser substituído PRECISA existir
+            if (!fs.existsSync(targetPath)) {
+                throw new Error(`Decisão para substituição não encontrada no repositório: ${s.id}`);
+            }
+
             let supersededBy = s.by || 'auto';
-            if (supersededBy.toLowerCase() === 'auto' && plan.operations.createdAdrs.length > 0) {
-                supersededBy = plan.operations.createdAdrs[0].id;
+            if (supersededBy.toLowerCase() === 'auto') {
+                if (plan.operations.createdAdrs.length === 1) {
+                    supersededBy = plan.operations.createdAdrs[0].id;
+                } else if (plan.operations.createdAdrs.length > 1) {
+                    throw new Error(`Ambiguidade em superseded_decisions: 'by: auto' não pode ser resolvido pois foram criados ${plan.operations.createdAdrs.length} novos ADRs neste lote. Especifique o ID explicitamente.`);
+                } else {
+                    throw new Error(`superseded_decisions definiu 'by: auto', mas nenhum novo ADR foi criado no lote.`);
+                }
             }
 
             plan.operations.supersededAdrs.push({
@@ -120,7 +145,7 @@ export function buildMutationPlan(
         }
     }
 
-    // 4. Planejamento do state.md
+    // 5. Planejamento do state.md
     if (payload.state) {
         plan.operations.stateUpdate = {
             targetPath: path.join(contextDir, 'state.md'),
@@ -134,7 +159,7 @@ export function buildMutationPlan(
         };
     }
 
-    // 5. Planejamento do glossary.md
+    // 6. Planejamento do glossary.md
     if (payload.new_glossary_terms && Array.isArray(payload.new_glossary_terms)) {
         for (const g of payload.new_glossary_terms) {
             if (g.term && g.definition) {

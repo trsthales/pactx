@@ -1,7 +1,8 @@
+
 # pactx 📦
 
-> **Universal context continuity & handoff engine for AI-assisted software development.**  
-> Keep your AI aligned across chats, models, and sessions without context degradation.
+> **Universal closed-loop context continuity & handoff engine for AI-assisted software development.**  
+> Keep your AI aligned across chats, models, and sessions without context degradation or manual state maintenance.
 
 [![npm version](https://img.shields.io/npm/v/pactx.svg)](https://www.npmjs.com/package/pactx)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -16,25 +17,33 @@ Long chat sessions suffer from context window degradation, hallucinations, and l
 
 ---
 
-## The Solution: `pactx`
+## The Solution: `pactx` Closed-Loop Memory
 
-`pactx` turns your repository into the **canonical source of truth**. Instead of asking the AI to remember, `pactx` inspects your project specifications, active decisions (ADRs), and Git runtime delta to compose an ultra-dense, token-optimized context pack.
+`pactx` turns your repository into the **canonical source of truth** and creates a **bidirectional bridge** between your codebase and any AI model.
 
 ```text
-┌────────────────────────────────────────────────────────┐
-│                   YOUR REPOSITORY                      │
-│  .ai-context/ (project, state, active ADRs, glossary)  │
-│  + Git Runtime State (branch, recent commits, diffs)   │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                      npx pactx
-                            │
-               ┌────────────┴────────────┐
-               ▼                         ▼
-      📋 Copied to Clipboard    💻 Pure Markdown Pack
-               │                         │
-     ChatGPT / Claude Web         Cursor / CLI Agents
+┌────────────────────────────────────────────────────────────────────────┐
+│                          YOUR REPOSITORY                               │
+│      .ai-context/ (project, state, active ADRs, glossary)              │
+│      + Git Runtime State (branch, recent commits, modified files)      │
+└──────────────────┬──────────────────────────────────▲──────────────────┘
+                   │                                  │
+      1. npx pactx │                     3. npx pactx │ update
+         (Egress)  │                        (Ingress) │ (Human-in-the-Loop)
+                   ▼                                  │
+    ┌──────────────────────────────┐   ┌──────────────┴──────────────────┐
+    │  📋 Token-Optimized Context  │   │  📦 Structured pactx-update     │
+    │     (Copied to Clipboard)    │   │     (ADRs, Facts, Hypotheses)   │
+    └──────────────┬───────────────┘   └──────────────▲──────────────────┘
+                   │                                  │
+                   ▼                                  │ 2. /handoff
+    ┌─────────────────────────────────────────────────┴──────────────────┐
+    │               ANY AI (ChatGPT / Claude / Gemini / Cursor)          │
+    └────────────────────────────────────────────────────────────────────┘
 ```
+
+1. **Egress (`pactx` / `pack`):** Inspects project specs, active ADRs, and Git delta to generate a clean, token-efficient Markdown context pack.
+2. **Ingress (`pactx update`):** Ingests the AI's structured handoff block, validates schema and security rules, presents a full-text review, and atomically persists decisions, facts, and tasks directly into `.ai-context/`.
 
 ---
 
@@ -47,20 +56,19 @@ No global installation required:
 npx pactx init
 ```
 
-This generates the standard directory structure:
+This scaffolds the canonical directory structure:
 ```text
 .ai-context/
 ├── project.md      # Static identity, stack, and non-negotiable rules
-├── state.md        # Active task, blockers, rejected hypotheses (DO NOT RETRY)
-├── glossary.md     # Invariant contracts, table names, endpoints
-└── decisions/      # Lightweight ADRs (DEC-001.md, DEC-002.md)
+├── state.md        # Active task, facts, blockers, rejected hypotheses
+├── glossary.md     # Invariant contracts, table names, domain terms
+└── decisions/      # Versioned micro-ADRs (DEC-001.md, DEC-002.md)
 ```
 
-### 2. Pack and Copy Context in 1 Second
+### 2. Pack Context & Start Session (1 Second)
 ```bash
 npx pactx
 ```
-
 Output:
 ```text
 ✔ Context packed com sucesso!
@@ -69,41 +77,129 @@ Tamanho: 1.45 KB | ~380 tokens
 
 👉 Cole diretamente no ChatGPT, Claude, Gemini ou no seu agente!
 ```
+Paste (`Ctrl+V`) into any AI chat. The AI will immediately understand the exact task, active architecture, invariant rules, and discarded hypotheses.
 
-Just press `Ctrl+V` (or `Cmd+V`) in any AI chat.
+### 3. Close the Loop & Persist State
+When finishing a task or before switching chats, ask the AI:
+> `"/handoff"` *(or "Generate the pactx-update block")*
+
+Copy the AI's response and run in your terminal:
+```bash
+npx pactx update
+```
+
+Interactive Review UI:
+```text
+📦 Bloco pactx-update detectado!
+
+Plano de Mutação Canônica:
+────────────────────────────────────────────────────────────────────────────
+📝 .ai-context/state.md
+   • Tarefa Ativa: "TASK-05 Login de Alunos via PIN" [IN_PROGRESS]
+   • Próximo Passo: "Implementar validação do StudentPIN no authController"
+   • [+] Fato: "Rate limit de login por PIN deve ser restrito a 5 tentativas por minuto"
+   • [+] Hipótese Descartada: "O login de alunos NÃO deve exigir e-mail ou senha"
+🏛️  .ai-context/decisions/DEC-002.md [CREATE]
+   • Título: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
+   • Decisão: "Utilizar combinação de Turma + PIN com hash seguro no PostgreSQL"
+📖 .ai-context/glossary.md [APPEND]
+   • StudentPIN: "Código numérico de 4 dígitos atribuído ao aluno"
+────────────────────────────────────────────────────────────────────────────
+
+? Deseja aplicar as alterações canônicas ao repositório? (Y/n) y
+
+✔ Estado canônico atualizado com sucesso!
+📋 Ledger de auditoria gravado em .ai-context/.pactx-history.json
+```
 
 ---
 
-## CLI Options
+## The `pactx-update` Protocol Schema
 
+AIs emit the candidate update block wrapped in the `pactx-update` code fence:
+
+````yaml
+```pactx-update
+version: "1.0"
+base_revision: "2a0de5"
+
+source:
+  model: "Gemini 1.5 Pro"
+  session_topic: "Implementação da autenticação por PIN"
+
+state:
+  active_task: "TASK-05 Login de Alunos via PIN"
+  status: "IN_PROGRESS" # IN_PROGRESS | BLOCKED | COMPLETED
+  recommended_model: "Medium" # Medium | High
+  completed_items:
+    - "Definição do fluxo de autenticação por PIN"
+  new_facts:
+    - "Rate limit de login por PIN restrito a 5 tentativas por minuto"
+  rejected_hypotheses:
+    - "O login de alunos NÃO deve exigir e-mail ou senha alfanumérica"
+  next_action: "Implementar validação no controller e aplicar rate limit"
+
+new_decisions:
+  - id: "auto" # pactx automatically calculates next sequence (DEC-002)
+    title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
+    reason: "Alunos do ensino fundamental possuem fricção com senhas complexas"
+    decision: "Utilizar Turma + PIN de 4 dígitos com hash seguro"
+
+superseded_decisions:
+  - id: "DEC-001"
+    by: "auto" # or specific ID
+    reason: "Substituída pelo novo modelo de multi-tenancy"
+
+new_glossary_terms:
+  - term: "StudentPIN"
+    definition: "Código numérico de 4 dígitos atribuído ao aluno"
+```
+````
+
+---
+
+## CLI Reference
+
+### Packing Commands
 | Command / Flag | Description |
 |---|---|
-| `pactx` / `npx pactx pack` | Assembles context, copies to clipboard, and prints stats |
-| `pactx init` | Scaffolds the `.ai-context/` specification files |
-| `pactx --short` | Omits glossary and non-essential sections for tight token budgets |
-| `pactx --stdout` | Dumps the markdown directly to terminal (ideal for pipes or CI) |
+| `pactx` / `pactx pack` | Reads repository state, copies context pack to clipboard, and prints stats |
+| `pactx init` | Scaffolds the `.ai-context/` directory with templates |
+| `pactx --short` | Generates a compact pack omitting glossary for tight token budgets |
+| `pactx --stdout` | Dumps the markdown directly to terminal (ideal for pipes or CLI tools) |
+
+### Ingestion Commands (`pactx update`)
+| Command / Flag | Description |
+|---|---|
+| `pactx update` | Reads clipboard, validates payload, displays full-text plan, and prompts for confirmation |
+| `pactx update -y`, `--yes` | Applies changes without interactive confirmation (strictly keeps all safety & schema validations) |
+| `pactx update --dry-run` | Simulates and displays the full mutation plan without writing to disk |
+| `pactx update --file <path>` | Reads the `pactx-update` block from a markdown or log file |
+| `pactx update --stdin` | Reads the block via pipe (`cat response.md \| pactx update --stdin`) |
 
 ---
 
-## Key Principles & Design
+## Enterprise Safety & Zero-Trust Architecture
 
-1. **Git-Native & Human-Readable:** Pure Markdown and YAML frontmatter committed to your Git history.
-2. **Negative Knowledge Preservation:** Explicitly tracks rejected hypotheses and failed paths to prevent new AIs from repeating previous mistakes.
-3. **ADR Lifecycle Filtering:** Automatically includes `status: active` decisions while summarizing `status: superseded` decisions so outdated architecture is never mistaken for current truth.
-4. **Headless Resilient:** Automatic fallback to stdout when running in headless CI/Linux environments without GUI clipboards.
+`pactx update` treats AI outputs as **untrusted candidate input**:
+
+1. **Path Traversal Jail:** ADR identifiers are restricted to `/^(auto|DEC-\d{3,4})$/i`. File writes are strictly jailed within `.ai-context/`.
+2. **Safe AST Serialization:** Zero naive string template interpolation for YAML. All frontmatter is safely generated via formal YAML dumpers to prevent structural injection.
+3. **Multi-File Atomic Commit & Rollback:** Changes are calculated in memory with pre-flight snapshots. If any write fails, a complete rollback is performed instantly (*Fail-Closed*).
+4. **Canonical Idempotency:** Payloads are normalized and hashed with SHA-256 into `.ai-context/.pactx-history.json`. Re-running the same clipboard results in a safe No-Op.
+5. **Anti-Poisoning Full-Text Review:** The terminal displays the full literal text of every incoming decision, fact, and hypothesis before prompting for human approval.
 
 ---
 
-## Specification (`.ai-context/`)
+## Directory Specification (`.ai-context/`)
 
-### `project.md`
-Stores static vision, technology stack, and invariant rules that the AI must never violate.
-
-### `state.md`
-The transient handoff file. Stores the active task, what was recently completed, discarded hypotheses, and the immediate next step.
-
-### `decisions/*.md`
-Micro-ADRs with frontmatter lifecycle tracking (`status: active | superseded | rejected`).
-
-### `glossary.md`
-Naming conventions, entities, and API contracts to avoid renaming drift across chats.
+```text
+.ai-context/
+├── project.md            # Vision, technology stack, and invariant rules
+├── state.md              # Active task, completed items, facts, and rejected hypotheses
+├── glossary.md           # Domain terms, API contracts, and entity definitions
+├── .pactx-history.json   # Audit ledger tracking applied SHA-256 update hashes
+└── decisions/
+    ├── DEC-001.md        # Active or superseded ADRs with structural lineage
+    └── DEC-002.md
+```

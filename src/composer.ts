@@ -12,6 +12,28 @@ function parseFrontmatterValue(content: string, key: string): string {
     return match ? match[1].trim() : '';
 }
 
+export function getCurrentContextRevision(contextDir: string): string {
+    const readFileSafe = (relPath: string) => {
+        const full = path.join(contextDir, relPath);
+        return fs.existsSync(full) ? fs.readFileSync(full, 'utf-8').trim() : '';
+    };
+
+    const projectContent = readFileSafe('project.md');
+    const stateContent = readFileSafe('state.md');
+    const decisionsDir = path.join(contextDir, 'decisions');
+    const decisions: string[] = [];
+
+    if (fs.existsSync(decisionsDir)) {
+        const files = (fs.readdirSync(decisionsDir) as string[]).filter(f => f.endsWith('.md')).sort();
+        for (const f of files) {
+            decisions.push(fs.readFileSync(path.join(decisionsDir, f), 'utf-8').trim());
+        }
+    }
+
+    const rawStateBlob = projectContent + stateContent + decisions.join('');
+    return crypto.createHash('sha256').update(rawStateBlob).digest('hex').substring(0, 6);
+}
+
 export function composeContext(cwd: string = process.cwd(), options: PackOptions = {}): string {
     const contextDir = path.join(cwd, '.ai-context');
 
@@ -33,7 +55,7 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
     const supersededDecisions: string[] = [];
 
     if (fs.existsSync(decisionsDir)) {
-        const files = (fs.readdirSync(decisionsDir) as string[]).filter((f: string) => f.endsWith('.md'));
+        const files = (fs.readdirSync(decisionsDir) as string[]).filter(f => f.endsWith('.md'));
         for (const f of files) {
             const content = fs.readFileSync(path.join(decisionsDir, f), 'utf-8').trim();
             const status = parseFrontmatterValue(content, 'status') || 'active';
@@ -49,10 +71,7 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
     }
 
     const git = getGitState();
-
-    // Calcula o hash de revisão canônica de 6 caracteres
-    const rawStateBlob = projectContent + stateContent + activeDecisions.join('') + (git.isGit ? git.branch : '');
-    const contextRevisionHash = crypto.createHash('sha256').update(rawStateBlob).digest('hex').substring(0, 6);
+    const contextRevisionHash = getCurrentContextRevision(contextDir);
 
     let out = `<!-- CONTEXT PACK: GERADO AUTOMATICAMENTE POR PACTX [rev: ${contextRevisionHash}] -->\n\n`;
     out += `Você está assumindo como Tech Lead / Engenheiro de Software deste projeto.\n`;
@@ -92,7 +111,6 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
         out += `\n`;
     }
 
-    // Bloco Egress com Diretrizes Anti-Alucinação
     out += `### PROTOCOLO DE ENCERRAMENTO & HANDOFF CANÔNICO:\n`;
     out += `Ao concluir uma tarefa, tomar decisões ou quando o usuário solicitar "/handoff", emita OBRIGATORIAMENTE o bloco abaixo.\n`;
     out += `DIRETRIZES: Registre apenas fatos e decisões reais desta sessão. NUNCA invente decisões para preencher o schema. Se não houver novas decisões, use listas vazias ([]).\n\n`;
@@ -107,9 +125,9 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
     out += `  new_facts:\n    - "<descoberta ou fato comprovado no runtime>"\n`;
     out += `  rejected_hypotheses:\n    - "<hipótese testada e comprovadamente falsa>"\n`;
     out += `  next_action: "<ação imediata seguinte>"\n`;
-    out += `new_decisions: [] # ou lista de { id: "auto", title: "...", reason: "...", decision: "..." }\n`;
-    out += `superseded_decisions: [] # ou lista de { id: "DEC-001", by: "auto", reason: "..." }\n`;
-    out += `new_glossary_terms: [] # ou lista de { term: "...", definition: "..." }\n`;
+    out += `new_decisions: []\n`;
+    out += `superseded_decisions: []\n`;
+    out += `new_glossary_terms: []\n`;
     out += `\`\`\`\n`;
 
     return out;
