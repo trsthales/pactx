@@ -14,14 +14,15 @@ export function sanitizeInlineMarkdown(val: string): string {
 function parseFrontmatterValue(content: string, key: string): string {
     const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (!fmMatch) return '';
-    const match = fmMatch[1].match(new RegExp(`^${key}:\\s*["']?([^"'\\r\\n]+)["']?`, 'm'));
+    const safeKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = fmMatch[1].match(new RegExp(`^${safeKey}:\\s*["']?([^"'\\r\\n]+)["']?`, 'm'));
     return match ? match[1].trim() : '';
 }
 
 export function getCurrentContextRevision(contextDir: string): string {
     const readFileSafe = (relPath: string) => {
         const full = path.join(contextDir, relPath);
-        return fs.existsSync(full) ? fs.readFileSync(full, 'utf-8').replace(/\r\n/g, '\n').trim() : '';
+        return fs.existsSync(full) ? fs.readFileSync(full, 'utf-8').replace(/\r\n?/g, '\n').trim() : '';
     };
 
     const projectContent = readFileSafe('project.md');
@@ -32,7 +33,7 @@ export function getCurrentContextRevision(contextDir: string): string {
     if (fs.existsSync(decisionsDir)) {
         const files = (fs.readdirSync(decisionsDir) as string[]).filter(f => f.endsWith('.md')).sort();
         for (const f of files) {
-            decisions.push(fs.readFileSync(path.join(decisionsDir, f), 'utf-8').replace(/\r\n/g, '\n').trim());
+            decisions.push(fs.readFileSync(path.join(decisionsDir, f), 'utf-8').replace(/\r\n?/g, '\n').trim());
         }
     }
 
