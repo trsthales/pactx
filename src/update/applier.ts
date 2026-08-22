@@ -126,6 +126,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
     process.on('SIGINT', handleSignal);
     process.on('SIGTERM', handleSignal);
+    process.on('SIGHUP', handleSignal);
 
     try {
         // 1. Criar Novos ADRs com Serialização Segura & Sanitização de Body
@@ -397,6 +398,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
         isApplying = false;
         process.removeListener('SIGINT', handleSignal);
         process.removeListener('SIGTERM', handleSignal);
+        process.removeListener('SIGHUP', handleSignal);
         lock.release();
     }
 }

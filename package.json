@@ -6,9 +6,21 @@
     "pactx": "./dist/cli.js"
   },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "README.pt-BR.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
+    "pretest": "node -e \"fs.rmSync('dist-test', { recursive: true, force: true })\"",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
     "build": "tsc",
+    "prepack": "npm run build && npm test",
     "dev": "ts-node src/cli.ts",
     "start": "node dist/cli.js"
   },

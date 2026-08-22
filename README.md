@@ -4,6 +4,8 @@
 > **Universal closed-loop context continuity & handoff engine for AI-assisted software development.**  
 > Keep your AI aligned across chats, models, and sessions without context degradation or manual state maintenance.
 
+🌐 **Language / Idioma:** [English](./README.md) | [Português (Brasil)](./README.pt-BR.md)
+
 [![npm version](https://img.shields.io/npm/v/pactx.svg)](https://www.npmjs.com/package/pactx)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -203,3 +205,16 @@ new_glossary_terms:
     ├── DEC-001.md        # Active or superseded ADRs with structural lineage
     └── DEC-002.md
 ```
+
+---
+
+## Documentation
+
+- 📖 **[Step-by-Step Tutorial](./docs/TUTORIAL.md)** — Practical guide on how to integrate and use `pactx` in your daily workflow.
+- 🏛️ **[Technical & Architecture Spec](./docs/ARCHITECTURE.md)** — Deep dive into the closed-loop engine, security jail, and transactional guarantees.
+
+---
+
+## License
+
+Distributed under the **MIT** License. See [`LICENSE`](./LICENSE) for more information.

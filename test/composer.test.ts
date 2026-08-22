@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { initProject } from '../src/init';
-import { composeContext } from '../src/composer';
+import { composeContext, sanitizeInlineMarkdown } from '../src/composer';
 
 test('initProject e composeContext workflow', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-'));
@@ -24,7 +24,6 @@ test('initProject e composeContext workflow', () => {
 });
 
 test('composer: sanitizeInlineMarkdown previne quebra de cercas e injeção de novas linhas', () => {
-    const { sanitizeInlineMarkdown } = require('../src/composer');
     const maliciousBranch = 'feat/`rm -rf /`\r\n### MALICIOUS';
     const sanitized = sanitizeInlineMarkdown(maliciousBranch);
     assert.strictEqual(sanitized, 'feat/ rm -rf / ### MALICIOUS');
