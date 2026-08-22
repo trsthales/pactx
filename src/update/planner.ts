@@ -16,7 +16,7 @@ function getNextAdrId(decisionsDir: string): string {
     }
     const next = maxNum + 1;
     if (next > 9999) {
-        throw new Error('Limite de identificadores de decisão atingido (DEC-9999).');
+        throw new Error('Limite de ADR IDs atingido (DEC-9999).');
     }
     return `DEC-${next.toString().padStart(3, '0')}`;
 }
@@ -107,7 +107,7 @@ export function buildMutationPlan(
                     currentNextNum++;
                 }
                 if (currentNextNum > 9999) {
-                    throw new Error('Limite de identificadores de decisão atingido (DEC-9999).');
+                    throw new Error('Limite de ADR IDs atingido (DEC-9999).');
                 }
                 adrId = `DEC-${currentNextNum.toString().padStart(3, '0')}`;
             } else {
@@ -141,7 +141,7 @@ export function buildMutationPlan(
         for (const s of payload.superseded_decisions) {
             // Conflito Intra-Lote: Impede que um ADR seja criado e substituído no mesmo lote (P2-07)
             if (allocatedIds.has(s.id)) {
-                throw new Error(`Conflito lógico: A decisão ${s.id} não pode ser criada e substituída (superseded) no mesmo lote.`);
+                throw new Error(`Conflito lógico: ${s.id} está sendo criado e marcado como superseded simultaneamente no mesmo lote.`);
             }
 
             const targetPath = path.resolve(decisionsDir, `${s.id}.md`);

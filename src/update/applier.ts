@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'yaml';
 import { MutationPlan, HistoryLedger } from './types';
+import { ContextLock } from './lock';
 
 const MAX_HISTORY_ENTRIES = 500;
 
@@ -20,13 +21,13 @@ export function safeWriteFileSync(filePath: string, content: string, encoding: B
 }
 
 export function sanitizeBodyField(val: string): string {
-    if (!val) return '';
+    if (typeof val !== 'string' || !val) return '';
     return val
         .replace(/\r\n/g, '\n')
         .split('\n')
         .map(line => {
             const trimmed = line.trim();
-            // Neutraliza cabeçalhos markdown (# a ######) transformando em blockquotes seguros
+            // Neutraliza cabeçalhos markdown (# a ######) transformando em citações
             if (/^#{1,6}\s/.test(trimmed)) {
                 return line.replace(/^(\s*)#{1,6}\s*/, '$1> ');
             }
@@ -57,6 +58,9 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
         fs.mkdirSync(decisionsDir, { recursive: true });
     }
 
+    const lock = new ContextLock(contextDir);
+    lock.acquire();
+
     // Snapshot em Memória para Rollback Transacional
     const snapshot = new Map<string, string | null>(); // path -> content (null se arquivo não existia)
     const createdFiles: string[] = [];
@@ -79,16 +83,17 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
         }
     };
 
-    let isWriting = true;
-    const onSignal = () => {
-        if (isWriting) {
+    let isApplying = true;
+    const handleSignal = () => {
+        if (isApplying) {
             rollback();
+            lock.release();
+            process.exit(130);
         }
-        process.exit(1);
     };
 
-    process.on('SIGINT', onSignal);
-    process.on('SIGTERM', onSignal);
+    process.on('SIGINT', handleSignal);
+    process.on('SIGTERM', handleSignal);
 
     try {
         // 1. Criar Novos ADRs com Serialização Segura & Sanitização de Body
@@ -97,7 +102,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             const frontmatter = {
                 spec_version: '1.0',
                 id: adr.id,
-                title: adr.title,
+                title: sanitizeBodyField(adr.title),
                 status: 'active',
                 date: adr.date,
             };
@@ -170,12 +175,12 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
                 let currentSection = '';
 
                 for (const line of lines) {
-                    const sectionLine = line.replace(/^#+\s*/, '').trim().toLowerCase();
+                    const sectionLine = line.replace(/^#+\s*/, '').replace(/^[^\p{L}\p{N}]+/u, '').trim().toLowerCase();
                     if (sectionLine.startsWith('o que foi feito')) {
                         currentSection = 'completed';
                     } else if (sectionLine.startsWith('hipóteses descartadas') || sectionLine.startsWith('hipoteses descartadas')) {
                         currentSection = 'hypotheses';
-                    } else if (sectionLine.startsWith('fatos') || sectionLine.startsWith('fatos &') || sectionLine.startsWith('fatos e')) {
+                    } else if (sectionLine.startsWith('fatos')) {
                         currentSection = 'facts';
                     } else if (/^#+\s/.test(line.trim())) {
                         currentSection = 'other';
@@ -245,9 +250,9 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
             let content = fs.existsSync(glossaryPath) ? fs.readFileSync(glossaryPath, 'utf-8').trim() : '# Glossário & Contratos';
             for (const term of plan.operations.appendedGlossaryTerms) {
-                const normalizedTerm = term.term.trim();
+                const normalizedTerm = sanitizeBodyField(term.term.trim());
                 const sanitizedDefinition = sanitizeBodyField(term.definition.trim());
-                if (!content.includes(`**${normalizedTerm}**`)) {
+                if (!content.toLowerCase().includes(`**${normalizedTerm.toLowerCase()}**`)) {
                     content += `\n- **${normalizedTerm}**: ${sanitizedDefinition}`;
                 }
             }
@@ -285,8 +290,9 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
         rollback();
         throw new Error(`Falha transacional durante a escrita. Rollback executado com sucesso. Causa: ${error.message}`);
     } finally {
-        isWriting = false;
-        process.removeListener('SIGINT', onSignal);
-        process.removeListener('SIGTERM', onSignal);
+        isApplying = false;
+        process.removeListener('SIGINT', handleSignal);
+        process.removeListener('SIGTERM', handleSignal);
+        lock.release();
     }
 }
