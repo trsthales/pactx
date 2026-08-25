@@ -3,7 +3,7 @@ import path from 'node:path';
 import { RawUpdatePayload, MutationPlan, HistoryLedger } from './types';
 import { getCurrentContextRevision } from '../composer';
 
-function getNextAdrId(decisionsDir: string): string {
+export function getNextAdrId(decisionsDir: string): string {
     if (!fs.existsSync(decisionsDir)) return 'DEC-001';
     const files = (fs.readdirSync(decisionsDir) as string[]).filter(f => f.endsWith('.md'));
     let maxNum = 0;
@@ -110,7 +110,8 @@ export function buildMutationPlan(
     if (payload.new_decisions && Array.isArray(payload.new_decisions)) {
         for (const d of payload.new_decisions) {
             let adrId = d.id ? String(d.id).trim() : '';
-            if (!adrId || adrId.toLowerCase() === 'auto') {
+            const isAuto = !adrId || adrId.toLowerCase() === 'auto';
+            if (isAuto) {
                 if (currentNextNum === 0) {
                     const nextStr = getNextAdrId(decisionsDir);
                     currentNextNum = parseInt(nextStr.replace('DEC-', ''), 10);
@@ -149,6 +150,7 @@ export function buildMutationPlan(
                 reason: d.reason || '',
                 decision: d.decision || '',
                 date: today,
+                isAuto,
             });
         }
     }
