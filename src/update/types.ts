@@ -49,6 +49,7 @@ export interface CreatedAdrOperation {
     reason: string;
     decision: string;
     date: string;
+    isAuto: boolean;
 }
 
 export interface SupersededAdrOperation {

@@ -1229,3 +1229,86 @@ test('Parser: Lança mensagem de erro acionável com dica de /handoff quando o b
         extractPactxBlock(invalidInput);
     }, /\/handoff/);
 });
+
+test('Concorrência Anti-TOCTOU: Alocação definitiva de ID auto sob ContextLock resolve colisões', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-toctou-'));
+    try {
+        initProject(tmpDir);
+        const decisionsDir = path.join(tmpDir, '.ai-context', 'decisions');
+
+        const payloadA = `
+\`\`\`pactx-update
+version: "1.0"
+new_decisions:
+  - id: "auto"
+    title: "Decisão do Processo A"
+    reason: "Motivo A"
+    decision: "Conteúdo A"
+superseded_decisions:
+  - id: "DEC-001"
+    by: "auto"
+    reason: "Substituída pelo Processo A"
+\`\`\`
+`;
+        const { payload: parsedA, canonicalHash: hashA } = parseAndValidateUpdate(payloadA);
+        const planA = buildMutationPlan(tmpDir, parsedA, hashA);
+
+        // Validação provisória em tempo de planejamento
+        assert.strictEqual(planA.operations.createdAdrs[0].id, 'DEC-002');
+        assert.strictEqual(planA.operations.createdAdrs[0].isAuto, true);
+        assert.strictEqual(planA.operations.supersededAdrs[0].supersededBy, 'DEC-002');
+
+        // Simula processo concorrente criando DEC-002.md antes da aplicação do plano A
+        const dec2Path = path.join(decisionsDir, 'DEC-002.md');
+        const dec2Content = `---
+spec_version: "1.0"
+id: "DEC-002"
+title: "Decisão Concorrente B"
+status: "active"
+date: "2026-08-25"
+---
+
+# Decision
+Conteúdo do processo concorrente B
+
+# Reason
+Motivo Concorrente B
+`;
+        fs.writeFileSync(dec2Path, dec2Content, 'utf-8');
+
+        // Executa a aplicação do Plano A
+        applyMutationPlan(tmpDir, planA);
+
+        const dec3Path = path.join(decisionsDir, 'DEC-003.md');
+
+        // 1. Validar que ambos os arquivos existem
+        assert.strictEqual(fs.existsSync(dec2Path), true, 'DEC-002.md deve continuar existindo');
+        assert.strictEqual(fs.existsSync(dec3Path), true, 'DEC-003.md deve ter sido criado para a mutação A');
+
+        // 2. Validar que DEC-002.md NÃO foi sobrescrito
+        const dec2ActualContent = fs.readFileSync(dec2Path, 'utf-8');
+        assert.strictEqual(dec2ActualContent, dec2Content, 'DEC-002.md não deve ter sido sobrescrito');
+
+        // 3. Validar que DEC-003.md contém o conteúdo do Plano A
+        const dec3ActualContent = fs.readFileSync(dec3Path, 'utf-8');
+        assert.match(dec3ActualContent, /id:\s*DEC-003/);
+        assert.match(dec3ActualContent, /Decisão do Processo A/);
+        assert.match(dec3ActualContent, /Conteúdo A/);
+
+        // 4. Validar que superseded_by em DEC-001.md foi atualizado para DEC-003
+        const dec1Path = path.join(decisionsDir, 'DEC-001.md');
+        const dec1ActualContent = fs.readFileSync(dec1Path, 'utf-8');
+        assert.match(dec1ActualContent, /status:\s*superseded/);
+        assert.match(dec1ActualContent, /superseded_by:\s*DEC-003/);
+
+        // 5. Validar que o ledger registrou o ID final real (DEC-003)
+        const historyPath = path.join(tmpDir, '.ai-context', '.pactx-history.json');
+        const ledger = JSON.parse(fs.readFileSync(historyPath, 'utf-8'));
+        const entry = ledger.applied_updates.find((u: any) => u.hash === hashA);
+        assert.ok(entry, 'Registro da mutação A deve constar no ledger');
+        assert.deepStrictEqual(entry.created_adrs, ['DEC-003']);
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});

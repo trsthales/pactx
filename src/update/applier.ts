@@ -4,6 +4,7 @@ import yaml from 'yaml';
 import { MutationPlan, HistoryLedger } from './types';
 import { ContextLock } from './lock';
 import { getCurrentContextRevision } from '../composer';
+import { getNextAdrId } from './planner';
 
 const MAX_HISTORY_ENTRIES = 500;
 
@@ -129,6 +130,58 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
     process.on('SIGHUP', handleSignal);
 
     try {
+        // 0. Resolução definitiva de IDs de ADRs automáticos sob ContextLock (Anti-TOCTOU)
+        const allocatedUnderLock = new Set<string>();
+        const idMapping = new Map<string, string>();
+
+        // Registra IDs explícitos primeiro para evitar que auto ocupe um ID explícito do mesmo lote
+        for (const adr of plan.operations.createdAdrs) {
+            if (!adr.isAuto) {
+                const targetPath = path.resolve(decisionsDir, `${adr.id}.md`);
+                if (fs.existsSync(targetPath)) {
+                    throw new Error(`Conflict: Decision ${adr.id} already exists in the repository.`);
+                }
+                allocatedUnderLock.add(adr.id);
+            }
+        }
+
+        let currentNextNum = 0;
+        for (const adr of plan.operations.createdAdrs) {
+            if (adr.isAuto) {
+                if (currentNextNum === 0) {
+                    const nextStr = getNextAdrId(decisionsDir);
+                    currentNextNum = parseInt(nextStr.replace('DEC-', ''), 10);
+                } else {
+                    currentNextNum++;
+                }
+                while (
+                    allocatedUnderLock.has(`DEC-${currentNextNum.toString().padStart(3, '0')}`) ||
+                    fs.existsSync(path.resolve(decisionsDir, `DEC-${currentNextNum.toString().padStart(3, '0')}.md`))
+                ) {
+                    currentNextNum++;
+                }
+                if (currentNextNum > 9999) {
+                    throw new Error('ADR ID limit reached (DEC-9999).');
+                }
+                const newId = `DEC-${currentNextNum.toString().padStart(3, '0')}`;
+                const oldId = adr.id;
+                if (oldId !== newId) {
+                    idMapping.set(oldId, newId);
+                }
+                adr.id = newId;
+                adr.targetPath = path.resolve(decisionsDir, `${newId}.md`);
+                allocatedUnderLock.add(newId);
+            }
+        }
+
+        if (idMapping.size > 0) {
+            for (const s of plan.operations.supersededAdrs) {
+                if (idMapping.has(s.supersededBy)) {
+                    s.supersededBy = idMapping.get(s.supersededBy)!;
+                }
+            }
+        }
+
         // 1. Criar Novos ADRs com Serialização Segura & Sanitização de Body
         for (const adr of plan.operations.createdAdrs) {
             recordSnapshot(adr.targetPath);

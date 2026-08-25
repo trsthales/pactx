@@ -1,0 +1,12 @@
+# Glossary & Contracts
+- **Canonical State**: The verified, persistent ground truth of the project stored in the repository (`.ai-context/`), versioned via Git.
+- **Candidate State**: Unverified mutation proposals emitted by LLMs (e.g. ````pactx-update```` blocks), treated as untrusted data until validated.
+- **Egress (`pactx pack`)**: The process of reading Git runtime state, active ADRs, and project memory to compose a token-optimized Markdown context pack.
+- **Ingress (`pactx update`)**: The process of parsing, validating, reviewing, and atomically committing candidate state proposals back into `.ai-context/`.
+- **Negative Knowledge**: Explicitly documented rejected hypotheses and failed technical approaches, preventing future LLMs from repeating previous mistakes.
+- **MutationPlan**: In-memory intermediate transaction plan representing verified changes before touching disk.
+- **ContextLock**: Atomic file lock (`.pactx.lock`) with flag `wx` and PID tracking. Serializes disk writes during `applyMutationPlan`, preventing concurrent write corruption. Does NOT yet cover ADR ID allocation in `buildMutationPlan`, which runs before the lock is acquired — see known concurrency gap in `state.md`.
+- **Canonical Hash**: SHA-256 digest of a normalized `pactx-update` payload, used as the idempotency key in `.pactx-history.json`. Two identical payloads always produce the same hash, regardless of formatting or Unicode form.
+- **Context Revision Hash (`base_revision`)**: 16-character SHA-256 digest of the current `.ai-context/` contents (project, state, glossary, decisions), used to detect staleness between when an AI packed context and when it proposes an update. Distinct from Canonical Hash — do not conflate the two.
+- **Fail-Closed**: The system's default failure posture — any ambiguity, corruption, or unexpected error aborts the entire operation and rolls back, rather than proceeding with partial or best-effort application.
+- **Patch Semantics**: The rule that partial updates to `state.md` only modify explicitly provided fields; unmentioned fields, sections, and user-authored custom sections are always preserved as-is.
