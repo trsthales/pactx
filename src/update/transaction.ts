@@ -151,21 +151,45 @@ export class TransactionEngine {
     }
 
     /**
-     * Checks if there are any pending failed or recovery-required transactions.
+     * Checks if there are any pending failed or recovery-required transactions,
+     * including corrupted transactions in quarantine (P2-B).
      */
     static hasPendingRecovery(contextDir: string): TransactionManifest | null {
         const transactionsDir = TransactionEngine.getTransactionsDir(contextDir);
-        if (!fs.existsSync(transactionsDir)) return null;
-        const files = fs.readdirSync(transactionsDir).filter(f => f.startsWith('TX-') && f.endsWith('.json'));
-        for (const file of files) {
-            try {
-                const raw = fs.readFileSync(path.join(transactionsDir, file), 'utf-8');
-                const manifest: TransactionManifest = JSON.parse(raw);
-                if (manifest.status === 'RECOVERY_REQUIRED' || manifest.status === 'FAILED') {
-                    return manifest;
-                }
-            } catch {}
+        if (fs.existsSync(transactionsDir)) {
+            const files = fs.readdirSync(transactionsDir).filter(f => f.startsWith('TX-') && f.endsWith('.json'));
+            for (const file of files) {
+                try {
+                    const raw = fs.readFileSync(path.join(transactionsDir, file), 'utf-8');
+                    const manifest: TransactionManifest = JSON.parse(raw);
+                    if (manifest.status === 'RECOVERY_REQUIRED' || manifest.status === 'FAILED') {
+                        return manifest;
+                    }
+                } catch {}
+            }
         }
+
+        // [P2-B] Verifica existência de manifestos corrompidos em .pactx/quarantine/
+        const quarantineDir = path.join(contextDir, '.pactx', 'quarantine');
+        if (fs.existsSync(quarantineDir)) {
+            const corruptFiles = fs.readdirSync(quarantineDir).filter(f => f.endsWith('.corrupt'));
+            if (corruptFiles.length > 0) {
+                const firstCorrupt = corruptFiles[0];
+                const cleanHash = path.basename(firstCorrupt, '.corrupt').replace(/^TX-/, '');
+                return {
+                    txHash: cleanHash,
+                    status: 'RECOVERY_REQUIRED',
+                    type: 'APPLY',
+                    recoveryAttempts: 0,
+                    createdAt: new Date().toISOString(),
+                    baseRevision: '',
+                    snapshot: [],
+                    createdFiles: [],
+                    plan: {} as any,
+                };
+            }
+        }
+
         return null;
     }
 

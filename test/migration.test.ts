@@ -261,3 +261,24 @@ test('P2-06 Containment: findContextDir não sobe além da raiz do repositório 
         fs.rmSync(parentTmpDir, { recursive: true, force: true });
     }
 });
+
+test('P2-C Bounded Traversal: findContextDir limita a busca a no máximo 10 níveis em projetos sem Git', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-nongit-depth-'));
+    try {
+        // Constrói 12 níveis de subpastas aninhadas
+        let deepPath = tmpDir;
+        for (let i = 1; i <= 12; i++) {
+            deepPath = path.join(deepPath, `level_${i}`);
+        }
+        fs.mkdirSync(deepPath, { recursive: true });
+
+        // A partir do 12º nível (sem Git), a busca deve abortar ao atingir 10 níveis
+        assert.throws(() => {
+            findContextDir(deepPath);
+        }, /Error: \.ai-context folder not found within 10 parent directories\. Run 'pactx init' to initialize\./);
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+

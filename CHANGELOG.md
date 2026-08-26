@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.2] - 2026-08-26
+
+### Security & Hardening
+- **[P1-A] Rollback Recovery Guard**: `pactx rollback` now verifies `hasPendingRecovery` and strictly blocks execution on repositories with unrecovered failed transactions (`RECOVERY_REQUIRED` / `FAILED`).
+- **[P1-B] Requirements Recovery Integrity**: Computed exact SHA-256 `afterHash` for newly created `requirements.md` files, preventing unconditional deletion during auto-recovery and correctly detecting post-crash modifications.
+- **[P1-C] Universal HTML/XML & URL Scheme Sanitization**: Expanded `sanitizeBodyField` to sanitize all generic HTML tags (`<script>`, `<img>`, `<style>`, etc.) and block dangerous URL schemes (`javascript:`, `vbscript:`, `data:`).
+- **[P2-B] Quarantine Detection**: `hasPendingRecovery` now inspects `.ai-context/.pactx/quarantine/` for quarantined corrupt manifests, blocking mutations until reviewed.
+- **[P2-C] Non-Git Directory Traversal Bounded**: Limited parent directory traversal in `findContextDir` to a maximum of 10 levels for non-git environments.
+
+## [0.3.1] - 2026-08-26
+
+### Added
+- Rollback operations recorded as first-class WAL transactions (`type: 'ROLLBACK'`).
+- Corrupt transaction quarantine (`.pactx/quarantine/`) preserving 100% forensic evidence without arbitrary deletion.
+- Blocking state `RECOVERY_REQUIRED` protecting corrupted or conflictive repositories.
+- Conflict-aware auto-recovery validating `afterHash` before removing created files.
+- Living process check (`isProcessAlive` with `process.kill(pid, 0)`) for lock releases and temporary file cleanup.
+- Lazy-loading dynamic imports in CLI commands for optimized startup performance.
+
 ## [0.3.0] - 2026-08-26
 
 ### Added

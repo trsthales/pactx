@@ -32,6 +32,16 @@ export async function executeRollback(
         // 1. Auto-recovery de integridade prévio sob lock
         TransactionEngine.runAutoRecovery(contextDir, true);
 
+        // [P1-A] Trava de segurança: impede rollback se houver transações que requerem recuperação
+        const pendingRecovery = TransactionEngine.hasPendingRecovery(contextDir);
+        if (pendingRecovery) {
+            lock.release();
+            throw new Error(
+                `Repository blocked: Transaction TX-${pendingRecovery.txHash} requires recovery ` +
+                `(Status: ${pendingRecovery.status}). Run 'pactx doctor --fix' before rolling back.`
+            );
+        }
+
         // 2. Coleta de todas as transações COMMITTED (que não sejam do tipo ROLLBACK)
         const files = fs.readdirSync(transactionsDir).filter(f => f.startsWith('TX-') && f.endsWith('.json'));
         const committedManifests: TransactionManifest[] = [];

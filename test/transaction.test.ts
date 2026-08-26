@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { initProject } from '../src/init';
 import { parseAndValidateUpdate } from '../src/update/parser';
 import { buildMutationPlan } from '../src/update/planner';
-import { applyMutationPlan } from '../src/update/applier';
+import { applyMutationPlan, sanitizeBodyField } from '../src/update/applier';
 import { TransactionEngine } from '../src/update/transaction';
 import { TransactionManifest } from '../src/update/types';
 import { ContextLock } from '../src/update/lock';
@@ -548,5 +548,121 @@ test('P1-04 Conflict-Aware Auto-Recovery: Marca como RECOVERY_REQUIRED e não de
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+test('P1-B: Requirements.md criado pela 1ª vez grava afterHash real e recovery detecta conflito se modificado', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-req-afterhash-'));
+    try {
+        initProject(tmpDir);
+        const contextDir = path.join(tmpDir, '.ai-context');
+        const transactionsDir = path.join(contextDir, '.pactx', 'transactions');
+        const reqPath = path.join(contextDir, 'requirements.md');
+
+        // Remove requirements.md se existir para simular criação pela 1ª vez
+        if (fs.existsSync(reqPath)) {
+            fs.unlinkSync(reqPath);
+        }
+
+        const payload = `
+\`\`\`pactx-update
+version: "1.1"
+new_requirements:
+  - id: "auto"
+    type: "functional"
+    title: "Requisito de Teste de Integridade"
+    statement: "Statement de Teste"
+\`\`\`
+`;
+        const { payload: parsed, canonicalHash } = parseAndValidateUpdate(payload);
+        const plan = buildMutationPlan(tmpDir, parsed, canonicalHash);
+        applyMutationPlan(tmpDir, plan);
+
+        // Verifica manifesto gravado
+        const manifestPath = path.join(transactionsDir, `TX-${canonicalHash}.json`);
+        assert.strictEqual(fs.existsSync(manifestPath), true);
+        const manifest: TransactionManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+
+        const reqCreatedEntry = manifest.createdFiles.find(f => (typeof f === 'string' ? f : f.relativePath) === 'requirements.md');
+        assert.ok(reqCreatedEntry, 'requirements.md deve estar registrado em createdFiles');
+        assert.ok(typeof reqCreatedEntry !== 'string');
+        assert.ok(reqCreatedEntry.afterHash && reqCreatedEntry.afterHash.length === 64, 'afterHash de requirements.md deve ser um hash SHA-256 válido');
+
+        // Simula crash em APPLYING e modificação manual no requirements.md
+        manifest.status = 'APPLYING';
+        manifest.recoveryAttempts = 0;
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
+
+        // Altera o requirements.md no disco
+        fs.writeFileSync(reqPath, '# Modificado manualmente pós-crash\n', 'utf-8');
+
+        // Executa auto-recovery: DEVE detectar conflito de afterHash e NÃO deletar
+        const recoveryResult = TransactionEngine.runAutoRecovery(contextDir);
+        assert.deepStrictEqual(recoveryResult.failed, [canonicalHash]);
+
+        assert.strictEqual(fs.existsSync(reqPath), true, 'requirements.md modificado pós-crash NÃO deve ser deletado');
+        assert.strictEqual(fs.readFileSync(reqPath, 'utf-8'), '# Modificado manualmente pós-crash\n');
+
+        const updatedManifest: TransactionManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+        assert.strictEqual(updatedManifest.status, 'RECOVERY_REQUIRED');
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('P1-C: sanitizeBodyField neutraliza tags HTML genéricas (<script>, <img>) e esquemas de URL perigosos', () => {
+    // 1. Tags HTML genéricas
+    const scriptInput = '<script>alert("xss")</script>';
+    const scriptSanitized = sanitizeBodyField(scriptInput);
+    assert.strictEqual(scriptSanitized.includes('<script>'), false);
+    assert.strictEqual(scriptSanitized.includes('</script>'), false);
+    assert.match(scriptSanitized, /\[tag-escaped\]alert\("xss"\)\[tag-escaped\]/);
+
+    const imgInput = '<img src="x" onerror="alert(1)">';
+    const imgSanitized = sanitizeBodyField(imgInput);
+    assert.strictEqual(imgSanitized.includes('<img'), false);
+    assert.match(imgSanitized, /\[tag-escaped\]/);
+
+    // 2. Esquemas de URL maliciosos
+    const jsUrl = 'Click here: javascript:alert(1)';
+    const jsSanitized = sanitizeBodyField(jsUrl);
+    assert.strictEqual(jsSanitized.includes('javascript:'), false);
+    assert.match(jsSanitized, /\[url-scheme-blocked\]:alert\(1\)/);
+
+    const dataUrl = 'Data: data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==';
+    const dataSanitized = sanitizeBodyField(dataUrl);
+    assert.strictEqual(dataSanitized.includes('data:'), false);
+    assert.match(dataSanitized, /\[url-scheme-blocked\]:text\/html/);
+
+    const vbUrl = 'VBScript: vbscript:msgbox';
+    const vbSanitized = sanitizeBodyField(vbUrl);
+    assert.strictEqual(vbSanitized.includes('vbscript:'), false);
+    assert.match(vbSanitized, /\[url-scheme-blocked\]:msgbox/);
+});
+
+test('P2-B: hasPendingRecovery detecta arquivos na pasta .pactx/quarantine/', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-quarantine-detect-'));
+    try {
+        initProject(tmpDir);
+        const contextDir = path.join(tmpDir, '.ai-context');
+        const quarantineDir = path.join(contextDir, '.pactx', 'quarantine');
+        fs.mkdirSync(quarantineDir, { recursive: true });
+
+        // Inicialmente sem quarentena
+        assert.strictEqual(TransactionEngine.hasPendingRecovery(contextDir), null);
+
+        // Adiciona arquivo corrompido em quarantine/
+        fs.writeFileSync(path.join(quarantineDir, 'TX-corrupted123.corrupt'), '{ invalid json ...', 'utf-8');
+
+        // hasPendingRecovery DEVE acusar bloqueio
+        const pending = TransactionEngine.hasPendingRecovery(contextDir);
+        assert.ok(pending, 'Deve acusar transação pendente de recuperação');
+        assert.strictEqual(pending.txHash, 'corrupted123');
+        assert.strictEqual(pending.status, 'RECOVERY_REQUIRED');
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 
 

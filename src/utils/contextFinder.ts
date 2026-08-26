@@ -10,6 +10,8 @@ import { getGitRoot } from '../git';
 export function findContextDir(startDir: string = process.cwd()): string {
     let currentDir = path.resolve(startDir);
     const gitRoot = getGitRoot(currentDir);
+    let depth = 0;
+    const MAX_DEPTH_WITHOUT_GIT = 10;
 
     while (true) {
         const candidate = path.join(currentDir, '.ai-context');
@@ -24,6 +26,11 @@ export function findContextDir(startDir: string = process.cwd()): string {
         // Se chegamos na raiz do Git e não encontramos .ai-context, não subimos além do repositório Git (P2-06)
         if (gitRoot && currentDir === gitRoot) {
             throw new Error(".ai-context folder not found in this repository. Run 'pactx init' to initialize.");
+        }
+
+        // [P2-C] Limita a busca a no máximo 10 níveis quando não estiver em um repositório Git
+        if (!gitRoot && ++depth > MAX_DEPTH_WITHOUT_GIT) {
+            throw new Error(`Error: .ai-context folder not found within ${MAX_DEPTH_WITHOUT_GIT} parent directories. Run 'pactx init' to initialize.`);
         }
 
         const parentDir = path.dirname(currentDir);
