@@ -65,9 +65,10 @@ Isso gera a estrutura canônica de diretórios:
 ```text
 .ai-context/
 ├── project.md      # Identidade estática, stack e regras invioláveis
+├── requirements.md # Requisitos canônicos & regras de negócio (REQ-001)
 ├── state.md        # Tarefa ativa, fatos, impedimentos, hipóteses descartadas
 ├── glossary.md     # Contratos invariantes, tabelas, termos de domínio
-└── decisions/      # Micro-ADRs versionadas (DEC-001.md, DEC-002.md)
+└── decisions/      # Micro-ADRs versionadas (DEC-001.md)
 ```
 
 ### 2. Empacote o Contexto & Inicie a Sessão (1 Segundo)
@@ -104,8 +105,12 @@ Canonical Mutation Plan:
    • Next Action: "Implementar validação do StudentPIN no authController"
    • [+] Fact: "Rate limit de login por PIN deve ser restrito a 5 tentativas por minuto"
    • [+] Discarded Hypothesis: "O login de alunos NÃO deve exigir e-mail ou senha"
+📋 .ai-context/requirements.md [CREATE]
+   • [REQ-002] "Student PIN Security Policy" (functional)
+     Statement: "Alunos devem se autenticar através de PIN de 4 dígitos com rate limit restrito."
 🏛️  .ai-context/decisions/DEC-002.md [CREATE]
    • Title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
+   • Satisfies: REQ-002
    • Decision: "Utilizar combinação de Turma + PIN com hash seguro no PostgreSQL"
 📖 .ai-context/glossary.md [APPEND]
    • StudentPIN: "Código numérico de 4 dígitos atribuído ao aluno"
@@ -114,21 +119,22 @@ Canonical Mutation Plan:
 ? Apply canonical changes to repository? (Y/n) y
 
 ✔ Canonical state updated successfully!
-📋 Audit ledger recorded in .ai-context/.pactx-history.json
+📋 Audit ledger recorded in .ai-context/.pactx/ledger.json
 ```
 
 ---
 
-## O Schema do Bloco `pactx-update`
+## O Schema do Bloco `pactx-update` (v1.1)
 
 As IAs emitem o bloco de atualização encapsulado na cerca de código `pactx-update`:
 
 ````yaml
 ```pactx-update
-version: "1.0"
+version: "1.1"
 base_revision: "2a0de5fa8c9b10e4"
 
 source:
+  type: "conversation" # conversation | agent | manual | document
   model: "Gemini 1.5 Pro"
   session_topic: "Implementação da autenticação por PIN"
 
@@ -144,11 +150,18 @@ state:
     - "O login de alunos NÃO deve exigir e-mail ou senha alfanumérica"
   next_action: "Implementar validação no controller e aplicar rate limit"
 
+new_requirements:
+  - id: "auto" # gera automaticamente REQ-002
+    type: "functional" # functional | security | performance | compliance
+    title: "Student PIN Security Policy"
+    statement: "Alunos devem se autenticar através de PIN de 4 dígitos com rate limit restrito."
+
 new_decisions:
   - id: "auto" # O pactx calcula automaticamente a próxima sequência (DEC-002)
     title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
     reason: "Alunos do ensino fundamental possuem fricção com senhas complexas"
     decision: "Utilizar Turma + PIN de 4 dígitos com hash seguro"
+    satisfies: ["REQ-002"]
 
 superseded_decisions:
   - id: "DEC-001"
@@ -165,13 +178,20 @@ new_glossary_terms:
 
 ## Referência da CLI
 
-### Comandos de Empacotamento
+### Comandos Principais
 | Comando / Flag | Descrição |
 |---|---|
 | `pactx` / `pactx pack` | Lê o estado do repositório, copia o pacote de contexto para o clipboard e exibe estatísticas |
 | `pactx init` | Cria a estrutura de diretórios `.ai-context/` com templates iniciais |
-| `pactx --short` | Gera uma versão compacta omitindo o glossário para janelas de tokens restritas |
-| `pactx --stdout` | Imprime o markdown diretamente no terminal (ideal para pipes ou scripts) |
+| `pactx status` | Exibe o dashboard visual executivo da memória cognitiva e estado do git |
+| `pactx status --json` | Emite o status completo estruturado em formato JSON para automações |
+| `pactx diff` | Inspeciona e exibe o plano de mutação colorido sem gravar arquivos no disco |
+| `pactx diff --file <path>` | Inspeciona plano de mutação a partir de um arquivo específico |
+| `pactx diff --stdin` | Inspeciona plano de mutação recebido via pipe |
+| `pactx rollback [hash]` | Reversão Graph-Safe & WAL-Protected da transação mais recente (LIFO) ou hash específico |
+| `pactx rollback --force-cascade` | Reverte automaticamente em cascata todas as transações dependentes posteriores |
+| `pactx doctor` | Valida a saúde e integridade do repositório contra 8 regras fundamentais |
+| `pactx doctor --fix` | Repara automaticamente locks abandonados, limpa temporários e poda registros antigos |
 
 ### Comandos de Ingestão (`pactx update`)
 | Comando / Flag | Descrição |
@@ -189,10 +209,45 @@ new_glossary_terms:
 
 O `pactx update` trata todas as saídas de IA como **entradas não confiáveis**:
 
-1. **Jail de Diretórios & Anti-Path Traversal:** Identificadores de ADR são restritos à regex `/^(auto\|DEC-(?!0+$)\d{3,4})$/i`. Escritas são rigorosamente presas dentro de `.ai-context/` com validação de `realpath`.
-2. **Serialização Segura via AST:** Nenhuma interpolação ingênua de strings em YAML. Todos os frontmatters são gerados através de dumpers formais de YAML para prevenir injeção estrutural.
-3. **Escrita Atômica & Rollback Automático:** Mutações são gravadas via arquivo temporário com substituição atômica (`safeAtomicWriteFileSync`). Em caso de erro, é feito rollback instantâneo (*Fail-Closed*).
-4. **Idempotência Canônica:** Payloads são normalizados e registrados com hash SHA-256 no arquivo `.ai-context/.pactx-history.json`. Executar o mesmo clipboard novamente resulta em No-Op seguro.
+1. **Write-Ahead Logging (WAL):** Mutações de múltiplos arquivos são orquestradas via manifestos WAL atômicos (`PREPARED` -> `APPLYING` -> `COMMITTED` / `ROLLED_BACK`). Quedas de processo disparam auto-recovery transparente no boot.
+2. **Jail de Diretórios & Anti-Path Traversal:** Identificadores de ADR e Requisitos são restritos à regex `/^(auto\|DEC-(?!0+$)\d{3,4}\|REQ-(?!0+$)\d{3,4})$/i`. Escritas são presas dentro de `.ai-context/` com validação de `realpath`.
+3. **Serialização Segura via AST:** Nenhuma interpolação ingênua de strings em YAML. Todos os frontmatters são gerados através de dumpers formais de YAML para prevenir injeção estrutural.
+4. **Reversão Graph-Safe:** O rollback analisa vínculos dependentes (`satisfies`, `superseded_by`) e impede estados corrompidos ou inconsistentes.
+5. **Idempotência Canônica:** Payloads são normalizados e registrados com hash SHA-256 no arquivo `.ai-context/.pactx/ledger.json`. Executar o mesmo clipboard novamente resulta em No-Op seguro.
+6. **Revisão Humana Anti-Envenenamento:** O terminal exibe o texto literal e completo de cada decisão, requisito, fato e hipótese antes de solicitar a confirmação do desenvolvedor.
+7. **File Locking Concorrente:** Proteção contra escritas simultâneas em múltiplos terminais via `.pactx.lock` exclusivo e tratamento de sinais (`SIGINT`, `SIGTERM`, `SIGHUP`).
+
+---
+
+## Especificação dos Arquivos (`.ai-context/`)
+
+```text
+.ai-context/
+├── project.md            # Visão, stack tecnológica e regras invioláveis
+├── requirements.md       # Requisitos canônicos & regras de negócio (REQ-001)
+├── state.md              # Tarefa ativa, itens concluídos, fatos e hipóteses descartadas
+├── glossary.md           # Termos de domínio, contratos de API e entidades
+├── decisions/
+│   ├── DEC-001.md        # ADRs ativas ou obsoletas com linhagem estrutural & vínculos satisfies
+│   └── DEC-002.md
+└── .pactx/
+    ├── ledger.json       # Ledger de auditoria com hashes SHA-256 aplicados
+    ├── .pactx.lock       # Lockfile de concorrência atômica
+    └── transactions/     # Manifestos do Write-Ahead Log (WAL) (TX-<hash>.json)
+```
+
+---
+
+## Documentação
+
+- 📖 **[Tutorial Passo a Passo](./docs/TUTORIAL.pt-BR.md)** — Guia prático sobre como integrar e usar o `pactx` no seu fluxo diário.
+- 🏛️ **[Especificação Técnica & Arquitetura](./docs/ARCHITECTURE.pt-BR.md)** — Detalhamento técnico sobre o motor de loop fechado, modelo de segurança e garantias transacionais.
+
+---
+
+## Licença
+
+Distribuído sob a licença **MIT**. Consulte o arquivo [`LICENSE`](./LICENSE) para obter mais informações.izados e registrados com hash SHA-256 no arquivo `.ai-context/.pactx-history.json`. Executar o mesmo clipboard novamente resulta em No-Op seguro.
 5. **Revisão Humana Anti-Envenenamento:** O terminal exibe o texto literal e completo de cada decisão, fato e hipótese antes de solicitar a confirmação do desenvolvedor.
 6. **File Locking Concorrente:** Proteção contra escritas simultâneas em múltiplos terminais via `.pactx.lock` exclusivo e tratamento de sinais (`SIGINT`, `SIGTERM`, `SIGHUP`).
 

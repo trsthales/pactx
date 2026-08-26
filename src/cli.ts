@@ -9,13 +9,19 @@ import { composeContext } from './composer';
 import { parseAndValidateUpdate } from './update/parser';
 import { buildMutationPlan } from './update/planner';
 import { applyMutationPlan } from './update/applier';
+import { TransactionEngine } from './update/transaction';
+import { findContextDir, findProjectRoot } from './utils/contextFinder';
+import { renderStatus } from './commands/status';
+import { renderDiff } from './commands/diff';
+import { executeRollback } from './commands/rollback';
+import { renderDoctor } from './commands/doctor';
 
 const program = new Command();
 
 program
     .name('pactx')
     .description('Universal context continuity & handoff engine for AI-assisted development')
-    .version('0.2.1');
+    .version('0.3.0');
 
 program
     .command('init')
@@ -31,7 +37,10 @@ program
     .option('--stdout', 'Print to terminal only without copying to clipboard')
     .action(async (options) => {
         try {
-            const output = composeContext(process.cwd(), { short: options.short });
+            const contextDir = findContextDir(process.cwd());
+            TransactionEngine.runAutoRecovery(contextDir);
+            const projectRoot = findProjectRoot(process.cwd());
+            const output = composeContext(projectRoot, { short: options.short });
             const bytes = Buffer.byteLength(output, 'utf8');
             const estimatedTokens = Math.round(bytes / 3.8);
 
@@ -86,8 +95,11 @@ program
                 }
             }
 
+            const contextDir = findContextDir(process.cwd());
+            TransactionEngine.runAutoRecovery(contextDir);
+            const projectRoot = findProjectRoot(process.cwd());
             const { payload, canonicalHash, warnings } = parseAndValidateUpdate(rawInput);
-            const plan = buildMutationPlan(process.cwd(), payload, canonicalHash, warnings);
+            const plan = buildMutationPlan(projectRoot, payload, canonicalHash, warnings);
 
             console.log(pc.bold(pc.cyan('\n📦 pactx-update block detected!\n')));
 
@@ -123,9 +135,22 @@ program
                 plan.operations.stateUpdate.newRejectedHypotheses.forEach(h => console.log(pc.magenta(`   • [+] Discarded Hypothesis: "${h}"`)));
             }
 
+            if (plan.operations.createdRequirements && plan.operations.createdRequirements.length > 0) {
+                console.log(pc.magenta('📋 .ai-context/requirements.md [CREATE]'));
+                for (const req of plan.operations.createdRequirements) {
+                    console.log(`   • [${req.id}] "${req.title}" (${req.type})`);
+                    if (req.statement) {
+                        console.log(`     Statement: "${req.statement}"`);
+                    }
+                }
+            }
+
             for (const adr of plan.operations.createdAdrs) {
                 console.log(pc.green(`🏛️  .ai-context/decisions/${adr.id}.md [CREATE]`));
                 console.log(`   • Title: "${adr.title}"`);
+                if (adr.satisfies && adr.satisfies.length > 0) {
+                    console.log(`   • Satisfies: ${adr.satisfies.join(', ')}`);
+                }
                 console.log(`   • Decision: "${adr.decision}"`);
             }
 
@@ -160,13 +185,75 @@ program
             }
 
             plan.isForced = !!options.force;
-            applyMutationPlan(process.cwd(), plan);
+            applyMutationPlan(projectRoot, plan);
             console.log(pc.green('\n✔ Canonical state updated successfully!'));
-            console.log(pc.dim('📋 Audit ledger recorded in .ai-context/.pactx-history.json\n'));
+            console.log(pc.dim('📋 Audit ledger recorded in .ai-context/.pactx/ledger.json\n'));
 
         } catch (err: any) {
             console.error(pc.red(`\n✖ Error: ${err.message}\n`));
             process.exit(1);
+        }
+    });
+
+program
+    .command('status')
+    .description('Display status and cognitive memory metrics of the repository')
+    .option('-j, --json', 'Output full metrics as structured JSON')
+    .action(async (options) => {
+        try {
+            renderStatus(process.cwd(), { json: options.json });
+        } catch (err: any) {
+            console.error(pc.red(`✖ Error: ${err.message}`));
+            process.exit(1);
+        }
+    });
+
+program
+    .command('diff')
+    .description('Inspect the mutation plan from clipboard, file, or stdin without modifying disk')
+    .option('--file <path>', 'Read pactx-update block from a file')
+    .option('--stdin', 'Read block from stdin (pipe)')
+    .action(async (options) => {
+        try {
+            await renderDiff(process.cwd(), { file: options.file, stdin: options.stdin });
+        } catch (err: any) {
+            console.error(pc.red(`✖ Error: ${err.message}`));
+            process.exit(1);
+        }
+    });
+
+program
+    .command('rollback [hash]')
+    .description('Rollback one or more committed transactions safely (LIFO or specific hash)')
+    .option('-y, --yes', 'Apply rollback without interactive confirmation')
+    .option('--dry-run', 'Simulate rollback and display plan without modifying files on disk')
+    .option('--force-cascade', 'Automatically rollback all subsequent dependent transactions')
+    .action(async (hash, options) => {
+        try {
+            await executeRollback(process.cwd(), hash, {
+                yes: options.yes,
+                dryRun: options.dryRun,
+                forceCascade: options.forceCascade,
+            });
+        } catch (err: any) {
+            console.error(pc.red(`✖ Error: ${err.message}`));
+            process.exit(1);
+        }
+    });
+
+program
+    .command('doctor')
+    .description('Run integrity and consistency diagnostics across .ai-context/')
+    .option('--fix', 'Automatically repair fixable discrepancies, remove stale locks, and prune old records')
+    .action((options) => {
+        try {
+            const exitCode = renderDoctor(process.cwd(), options.fix);
+            if (exitCode !== 0 && !options.fix) {
+                process.exit(exitCode);
+            }
+        } catch (err: any) {
+            console.error(pc.red(`✖ Error: ${err.message}`));
+            process.exit(2);
         }
     });
 

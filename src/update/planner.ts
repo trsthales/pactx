@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { RawUpdatePayload, MutationPlan, HistoryLedger } from './types';
 import { getCurrentContextRevision } from '../composer';
+import { ensureStorageLayout } from './migration';
 
 export function getNextAdrId(decisionsDir: string): string {
     if (!fs.existsSync(decisionsDir)) return 'DEC-001';
@@ -19,6 +20,43 @@ export function getNextAdrId(decisionsDir: string): string {
         throw new Error('ADR ID limit reached (DEC-9999).');
     }
     return `DEC-${next.toString().padStart(3, '0')}`;
+}
+
+export function getExistingRequirementIds(requirementsPath: string): Set<string> {
+    const ids = new Set<string>();
+    if (!fs.existsSync(requirementsPath)) return ids;
+    try {
+        const raw = fs.readFileSync(requirementsPath, 'utf-8');
+        const matches = raw.matchAll(/REQ-(\d+)/gi);
+        for (const match of matches) {
+            ids.add(`REQ-${match[1].padStart(3, '0').toUpperCase()}`);
+        }
+    } catch {}
+    return ids;
+}
+
+export function getNextReqId(requirementsPath: string, allocatedIds: Set<string> = new Set()): string {
+    let maxNum = 0;
+    const existing = getExistingRequirementIds(requirementsPath);
+    for (const id of existing) {
+        const match = id.match(/^REQ-(\d+)$/i);
+        if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxNum) maxNum = num;
+        }
+    }
+    for (const id of allocatedIds) {
+        const match = id.match(/^REQ-(\d+)$/i);
+        if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxNum) maxNum = num;
+        }
+    }
+    const next = maxNum + 1;
+    if (next > 9999) {
+        throw new Error('Requirement ID limit reached (REQ-9999).');
+    }
+    return `REQ-${next.toString().padStart(3, '0')}`;
 }
 
 function assertInsideDirectory(parentDir: string, targetPath: string, entityName: string): void {
@@ -56,11 +94,14 @@ export function buildMutationPlan(
 ): MutationPlan {
     const contextDir = path.join(cwd, '.ai-context');
     const decisionsDir = path.join(contextDir, 'decisions');
-    const historyFile = path.join(contextDir, '.pactx-history.json');
+    const requirementsPath = path.join(contextDir, 'requirements.md');
 
     if (!fs.existsSync(contextDir)) {
         throw new Error('.ai-context folder not found in project.');
     }
+
+    ensureStorageLayout(contextDir);
+    const historyFile = path.join(contextDir, '.pactx', 'ledger.json');
 
     const warnings = [...initialWarnings];
 
@@ -81,7 +122,7 @@ export function buildMutationPlan(
                 isAlreadyApplied = true;
             }
         } catch (err: any) {
-            throw new Error(`Integrity failure: The history ledger .pactx-history.json is corrupted or contains invalid JSON (${err.message}). Operation aborted.`);
+            throw new Error(`Integrity failure: The history ledger .pactx/ledger.json is corrupted or contains invalid JSON (${err.message}). Operation aborted.`);
         }
     }
 
@@ -92,10 +133,13 @@ export function buildMutationPlan(
         isAlreadyApplied,
         warnings,
         source: payload.source ? {
+            type: payload.source.type || 'conversation',
             model: payload.source.model,
             sessionTopic: payload.source.session_topic,
         } : undefined,
         operations: {
+            createdRequirements: [],
+            updatedRequirements: [],
             createdAdrs: [],
             supersededAdrs: [],
             appendedGlossaryTerms: [],
@@ -104,7 +148,56 @@ export function buildMutationPlan(
 
     const today = new Date().toISOString().split('T')[0];
 
-    // 3. Planejamento de Novos ADRs & Detecção de Colisão
+    // 3. Planejamento de Requisitos (new_requirements) & Detecção de Colisão
+    const allocatedReqIds = new Set<string>();
+    const existingReqIds = getExistingRequirementIds(requirementsPath);
+    let currentNextReqNum = 0;
+
+    if (payload.new_requirements && Array.isArray(payload.new_requirements)) {
+        for (const r of payload.new_requirements) {
+            let reqId = r.id ? String(r.id).trim() : '';
+            const isAuto = !reqId || reqId.toLowerCase() === 'auto';
+            if (isAuto) {
+                if (currentNextReqNum === 0) {
+                    const nextStr = getNextReqId(requirementsPath, allocatedReqIds);
+                    currentNextReqNum = parseInt(nextStr.replace('REQ-', ''), 10);
+                } else {
+                    currentNextReqNum++;
+                }
+                while (
+                    allocatedReqIds.has(`REQ-${currentNextReqNum.toString().padStart(3, '0')}`) ||
+                    existingReqIds.has(`REQ-${currentNextReqNum.toString().padStart(3, '0')}`)
+                ) {
+                    currentNextReqNum++;
+                }
+                if (currentNextReqNum > 9999) {
+                    throw new Error('Requirement ID limit reached (REQ-9999).');
+                }
+                reqId = `REQ-${currentNextReqNum.toString().padStart(3, '0')}`;
+            } else {
+                reqId = reqId.toUpperCase();
+                if (allocatedReqIds.has(reqId)) {
+                    throw new Error(`Conflict: Requirement ${reqId} was declared more than once in the same batch.`);
+                }
+                if (existingReqIds.has(reqId)) {
+                    throw new Error(`Conflict: Requirement ${reqId} already exists in the repository.`);
+                }
+            }
+
+            allocatedReqIds.add(reqId);
+
+            plan.operations.createdRequirements.push({
+                id: reqId,
+                status: 'active',
+                type: r.type || 'functional',
+                title: r.title || 'Untitled Requirement',
+                statement: r.statement || '',
+                satisfied_by: [],
+            });
+        }
+    }
+
+    // 4. Planejamento de Novos ADRs, Detecção de Colisão & Vínculo satisfies
     const allocatedIds = new Set<string>();
     let currentNextNum = 0;
     if (payload.new_decisions && Array.isArray(payload.new_decisions)) {
@@ -143,6 +236,23 @@ export function buildMutationPlan(
             const targetPath = path.resolve(decisionsDir, `${adrId}.md`);
             assertInsideDirectory(decisionsDir, targetPath, `ADR ${adrId}`);
 
+            const satisfiesList = d.satisfies && Array.isArray(d.satisfies) ? d.satisfies : [];
+            for (const satId of satisfiesList) {
+                if (!existingReqIds.has(satId) && !allocatedReqIds.has(satId)) {
+                    warnings.push(`Requirement mapping warning: Decision "${adrId}" declares satisfies: ["${satId}"], but "${satId}" was not found in requirements.md or current batch.`);
+                }
+                const existingOp = plan.operations.updatedRequirements.find(u => u.id === satId);
+                if (existingOp) {
+                    if (!existingOp.satisfiedByAdd) existingOp.satisfiedByAdd = [];
+                    if (!existingOp.satisfiedByAdd.includes(adrId)) existingOp.satisfiedByAdd.push(adrId);
+                } else {
+                    plan.operations.updatedRequirements.push({
+                        id: satId,
+                        satisfiedByAdd: [adrId],
+                    });
+                }
+            }
+
             plan.operations.createdAdrs.push({
                 id: adrId,
                 targetPath,
@@ -151,6 +261,7 @@ export function buildMutationPlan(
                 decision: d.decision || '',
                 date: today,
                 isAuto,
+                satisfies: satisfiesList.length > 0 ? satisfiesList : undefined,
             });
         }
     }

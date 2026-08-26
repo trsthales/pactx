@@ -54,7 +54,7 @@ new_glossary_terms:
         applyMutationPlan(tmpDir, plan);
 
         assert.strictEqual(fs.existsSync(path.join(tmpDir, '.ai-context', 'decisions', 'DEC-002.md')), true);
-        assert.strictEqual(fs.existsSync(path.join(tmpDir, '.ai-context', '.pactx-history.json')), true);
+        assert.strictEqual(fs.existsSync(path.join(tmpDir, '.ai-context', '.pactx', 'ledger.json')), true);
 
         const stateContent = fs.readFileSync(path.join(tmpDir, '.ai-context', 'state.md'), 'utf-8');
         assert.match(stateContent, /TK-02 Auth Guard/);
@@ -650,11 +650,12 @@ test('Segurança H-02: Rejeição de payload acima do limite máximo de 512KB', 
     }, /exceeds the maximum allowed limit of 512KB/);
 });
 
-test('Limite P2-12: Histórico no .pactx-history.json é limitado aos 500 registros mais recentes', () => {
+test('Limite P2-12: Histórico no .pactx/ledger.json é limitado aos 500 registros mais recentes', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-ledger-limit-'));
     try {
         initProject(tmpDir);
-        const historyPath = path.join(tmpDir, '.ai-context', '.pactx-history.json');
+        const historyPath = path.join(tmpDir, '.ai-context', '.pactx', 'ledger.json');
+        fs.mkdirSync(path.dirname(historyPath), { recursive: true });
         
         // Pré-popula com 550 itens
         const dummyItems = Array.from({ length: 550 }, (_, i) => ({
@@ -1121,11 +1122,12 @@ test('Revisão Canônica: Inclusão de glossary.md no hash de revisão e expans�
     }
 });
 
-test('Fail-Closed: Falha ao carregar .pactx-history.json corrompido aborta a mutação', () => {
+test('Fail-Closed: Falha ao carregar .pactx/ledger.json corrompido aborta a mutação', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-corrupted-ledger-'));
     try {
         initProject(tmpDir);
-        const historyPath = path.join(tmpDir, '.ai-context', '.pactx-history.json');
+        const historyPath = path.join(tmpDir, '.ai-context', '.pactx', 'ledger.json');
+        fs.mkdirSync(path.dirname(historyPath), { recursive: true });
         fs.writeFileSync(historyPath, '{ corrupt_json: not_valid', 'utf-8');
 
         const payload = `
@@ -1138,7 +1140,7 @@ state:
         const { payload: parsed, canonicalHash } = parseAndValidateUpdate(payload);
         assert.throws(() => {
             buildMutationPlan(tmpDir, parsed, canonicalHash);
-        }, /Integrity failure: The history ledger \.pactx-history\.json is corrupted/);
+        }, /Integrity failure: The history ledger \.pactx\/ledger\.json is corrupted/);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1188,7 +1190,7 @@ new_decisions:
     assert.strictEqual(parsedLower.new_decisions?.[0].id, 'DEC-042');
 });
 
-test('Auditoria e Ledger: Gravação de isForced, revisões e metadados no .pactx-history.json', () => {
+test('Auditoria e Ledger: Gravação de isForced, revisões e metadados no .pactx/ledger.json', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-history-audit-'));
     try {
         initProject(tmpDir);
@@ -1205,7 +1207,7 @@ state:
         plan.isForced = true;
         applyMutationPlan(tmpDir, plan);
 
-        const historyPath = path.join(tmpDir, '.ai-context', '.pactx-history.json');
+        const historyPath = path.join(tmpDir, '.ai-context', '.pactx', 'ledger.json');
         const ledger = JSON.parse(fs.readFileSync(historyPath, 'utf-8'));
         const entry = ledger.applied_updates[0];
 
@@ -1302,7 +1304,7 @@ Motivo Concorrente B
         assert.match(dec1ActualContent, /superseded_by:\s*DEC-003/);
 
         // 5. Validar que o ledger registrou o ID final real (DEC-003)
-        const historyPath = path.join(tmpDir, '.ai-context', '.pactx-history.json');
+        const historyPath = path.join(tmpDir, '.ai-context', '.pactx', 'ledger.json');
         const ledger = JSON.parse(fs.readFileSync(historyPath, 'utf-8'));
         const entry = ledger.applied_updates.find((u: any) => u.hash === hashA);
         assert.ok(entry, 'Registro da mutação A deve constar no ledger');

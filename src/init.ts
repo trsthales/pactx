@@ -54,6 +54,24 @@ Start implementing the main module.
     );
 
     fs.writeFileSync(
+        path.join(contextDir, 'requirements.md'),
+        `---
+spec_version: "1.0"
+requirements:
+  - id: "REQ-001"
+    status: active
+    type: functional
+    title: "Initial System Requirement"
+    satisfied_by: ["DEC-001"]
+---
+# Requirements & Business Rules
+
+### [REQ-001] Initial System Requirement
+Define the core capabilities and functional requirements of the project.
+`
+    );
+
+    fs.writeFileSync(
         path.join(contextDir, 'glossary.md'),
         `# Glossary & Contracts
 - **User**: Represents an authenticated user in the system.
@@ -67,6 +85,7 @@ Start implementing the main module.
 id: "DEC-001"
 title: "Initial Architectural Decision"
 status: "active"
+satisfies: ["REQ-001"]
 date: "${new Date().toISOString().split('T')[0]}"
 ---
 # Decision

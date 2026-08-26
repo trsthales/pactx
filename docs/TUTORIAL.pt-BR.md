@@ -220,14 +220,63 @@ Canonical Mutation Plan:
 Pressione `Enter` ou digite `y`.
 
 ### O que o pactx fez automaticamente?
-1. **Escrita Atômica de ADR:** Criou `DEC-002.md` com numeração calculada automaticamente e frontmatter padronizado.
-2. **Semântica de Patch:** Atualizou `state.md` preservando seções customizadas do usuário e campos omitidos.
+1. **Write-Ahead Logging (WAL) & Escrita Atômica:** As mudanças foram orquestradas via manifestos WAL (`TX-<hash>.json`) e gravadas atomicamente.
+2. **Semântica de Patch:** Atualizou `state.md` e `requirements.md` preservando seções customizadas do usuário e requisitos existentes não mencionados.
 3. **Append no Glossário:** Inseriu o novo termo `StudentPIN` sem duplicar termos já existentes.
-4. **Ledger de Auditoria:** Gravou o hash SHA-256, base_revision, timestamp e metadados no `.pactx-history.json`.
+4. **Ledger de Auditoria:** Gravou o hash SHA-256, base_revision, timestamp e metadados em `.ai-context/.pactx/ledger.json`.
 
 ---
 
-## Passo 5: Versionamento no Git
+## Passo 5: Ferramentas e Operações Essenciais (`status`, `diff`, `doctor`, `rollback`)
+
+### 1. Inspecionando a Memória Cognitiva (`pactx status`)
+Visualize o status consolidado do projeto, métricas de requisitos, ADRs e saúde do git:
+
+```bash
+npx @trsthales/pactx status
+```
+
+Ou exporte os dados estruturados em JSON para automações/scripts:
+```bash
+npx @trsthales/pactx status --json
+```
+
+### 2. Pré-visualizando Mutações sem Gravar no Disco (`pactx diff`)
+Inspecione o plano de mutação colorido a partir do clipboard, arquivo ou pipe com zero efeitos colaterais no disco:
+
+```bash
+npx @trsthales/pactx diff
+# Ou a partir de um arquivo:
+npx @trsthales/pactx diff --file ./candidato_update.md
+```
+
+### 3. Validando a Integridade do Repositório & Auto-Repair (`pactx doctor`)
+Execute a suíte de 8 regras de consistência e segurança:
+
+```bash
+npx @trsthales/pactx doctor
+```
+
+Caso sejam detectados locks abandonados ou transações expiradas, repare automaticamente com:
+```bash
+npx @trsthales/pactx doctor --fix
+```
+
+### 4. Reversão Graph-Safe & WAL-Protected (`pactx rollback`)
+Reverta a mutação mais recente com segurança (LIFO):
+
+```bash
+npx @trsthales/pactx rollback
+```
+
+Ou reverta uma transação histórica específica:
+```bash
+npx @trsthales/pactx rollback <hash> --force-cascade
+```
+
+---
+
+## Passo 6: Versionamento no Git
 
 Faça o commit de `.ai-context/` junto com suas alterações de código:
 

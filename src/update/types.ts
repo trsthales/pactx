@@ -1,7 +1,20 @@
+export type RequirementType = 'functional' | 'security' | 'performance' | 'compliance';
+export type RequirementStatus = 'active' | 'draft' | 'deprecated';
+
+export interface RequirementItem {
+    id: string; // ex: "REQ-001"
+    status: RequirementStatus;
+    type: RequirementType;
+    title: string;
+    statement: string;
+    satisfied_by?: string[]; // ex: ["DEC-002"]
+}
+
 export interface RawUpdatePayload {
     version: string;
     base_revision?: string;
     source?: {
+        type?: 'conversation' | 'agent' | 'manual' | 'document';
         model?: string;
         session_topic?: string;
     };
@@ -14,11 +27,18 @@ export interface RawUpdatePayload {
         rejected_hypotheses?: string[];
         next_action?: string;
     };
+    new_requirements?: Array<{
+        id?: string;
+        type?: RequirementType;
+        title: string;
+        statement: string;
+    }>;
     new_decisions?: Array<{
         id?: string;
         title: string;
         reason: string;
         decision: string;
+        satisfies?: string[];
     }>;
     superseded_decisions?: Array<{
         id: string;
@@ -50,6 +70,7 @@ export interface CreatedAdrOperation {
     decision: string;
     date: string;
     isAuto: boolean;
+    satisfies?: string[];
 }
 
 export interface SupersededAdrOperation {
@@ -65,6 +86,12 @@ export interface GlossaryTermOperation {
     definition: string;
 }
 
+export interface UpdatedRequirementOperation {
+    id: string;
+    satisfiedByAdd?: string[];
+    status?: RequirementStatus;
+}
+
 export interface MutationPlan {
     schemaVersion: string;
     baseRevision?: string;
@@ -74,11 +101,14 @@ export interface MutationPlan {
     appliedRevision?: string;
     warnings: string[];
     source?: {
+        type?: 'conversation' | 'agent' | 'manual' | 'document';
         model?: string;
         sessionTopic?: string;
     };
     operations: {
         stateUpdate?: StateUpdateOperation;
+        createdRequirements: RequirementItem[];
+        updatedRequirements: UpdatedRequirementOperation[];
         createdAdrs: CreatedAdrOperation[];
         supersededAdrs: SupersededAdrOperation[];
         appendedGlossaryTerms: GlossaryTermOperation[];
@@ -99,4 +129,28 @@ export interface HistoryEntry {
 export interface HistoryLedger {
     version: string;
     applied_updates: HistoryEntry[];
+}
+
+export type TransactionStatus = 'PREPARED' | 'APPLYING' | 'COMMITTED' | 'ROLLED_BACK' | 'FAILED';
+
+export interface TransactionSnapshotItem {
+    path: string;
+    contentHash: string;
+    content: string | null;
+}
+
+export interface TransactionManifest {
+    txHash: string;
+    status: TransactionStatus;
+    recoveryAttempts: number;
+    createdAt: string;
+    source?: {
+        type: 'conversation' | 'agent' | 'manual' | 'document';
+        model?: string;
+        sessionTopic?: string;
+    };
+    baseRevision: string;
+    snapshot: TransactionSnapshotItem[];
+    createdFiles: string[];
+    plan: MutationPlan;
 }

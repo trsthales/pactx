@@ -220,14 +220,63 @@ Canonical Mutation Plan:
 Press `Enter` or type `y`.
 
 ### What happened automatically?
-1. **Atomic File Write:** `DEC-002.md` was created with frontmatter and body.
-2. **Patch Semantics:** `state.md` was updated cleanly without wiping out custom user sections or unmentioned fields.
+1. **Write-Ahead Logging & Atomic File Writes:** Changes were prepared via WAL (`TX-<hash>.json`) and atomically written.
+2. **Patch Semantics:** `state.md` and `requirements.md` were updated cleanly without wiping out custom user sections or unmentioned fields.
 3. **Glossary Term Appended:** `StudentPIN` was deduplicated and appended to `glossary.md`.
-4. **Audit Ledger Recorded:** SHA-256 hash, base revision, applied revision, and timestamp were logged to `.pactx-history.json`.
+4. **Audit Ledger Recorded:** SHA-256 hash, base revision, applied revision, and timestamp were logged to `.ai-context/.pactx/ledger.json`.
 
 ---
 
-## Step 5: Versioning in Git
+## Step 5: Essential Operations & Tooling (`status`, `diff`, `doctor`, `rollback`)
+
+### 1. InSPECTing Cognitive Memory (`pactx status`)
+View project status, cognitive memory metrics, and runtime health:
+
+```bash
+npx @trsthales/pactx status
+```
+
+Or export raw structured metrics as JSON for scripts:
+```bash
+npx @trsthales/pactx status --json
+```
+
+### 2. Previewing Changes Without Modifying Disk (`pactx diff`)
+Inspect the mutation plan from clipboard, file, or pipe with zero disk side-effects:
+
+```bash
+npx @trsthales/pactx diff
+# Or with file:
+npx @trsthales/pactx diff --file ./candidate_update.md
+```
+
+### 3. Validating Repository Health & Auto-Repair (`pactx doctor`)
+Run comprehensive integrity and consistency checks:
+
+```bash
+npx @trsthales/pactx doctor
+```
+
+If stale locks or expired transactions are detected, auto-repair with:
+```bash
+npx @trsthales/pactx doctor --fix
+```
+
+### 4. Graph-Safe & WAL-Protected Rollback (`pactx rollback`)
+Revert the most recent mutation (LIFO):
+
+```bash
+npx @trsthales/pactx rollback
+```
+
+Or revert a specific historical transaction:
+```bash
+npx @trsthales/pactx rollback <hash> --force-cascade
+```
+
+---
+
+## Step 6: Versioning in Git
 
 Commit `.ai-context/` alongside your code changes:
 
