@@ -170,7 +170,7 @@ test('Anti-Loop em Recovery: Transiciona para FAILED na 3ª tentativa consecutiv
     }
 });
 
-test('Crash durante PREPARED: Deleta com segurança arquivos de manifesto com JSON corrompido', () => {
+test('P1-02 Quarentena: Manifesto com JSON corrompido é movido para .pactx/quarantine/ e preserva evidência', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-corrupt-tx-'));
     try {
         initProject(tmpDir);
@@ -181,9 +181,13 @@ test('Crash durante PREPARED: Deleta com segurança arquivos de manifesto com JS
         const corruptTxPath = path.join(transactionsDir, 'TX-corrupted.json');
         fs.writeFileSync(corruptTxPath, '{ incomplete_json: true, ...', 'utf-8');
 
-        TransactionEngine.runAutoRecovery(contextDir);
+        const recovery = TransactionEngine.runAutoRecovery(contextDir);
 
-        assert.strictEqual(fs.existsSync(corruptTxPath), false, 'Manifesto corrompido deve ter sido limpo');
+        assert.strictEqual(fs.existsSync(corruptTxPath), false, 'Manifesto corrompido não deve permanecer em transactions/');
+        const quarantinePath = path.join(contextDir, '.pactx', 'quarantine', 'TX-corrupted.corrupt');
+        assert.strictEqual(fs.existsSync(quarantinePath), true, 'Manifesto corrompido deve estar na quarentena');
+        assert.strictEqual(fs.readFileSync(quarantinePath, 'utf-8'), '{ incomplete_json: true, ...', 'Conteúdo da evidência deve ser preservado');
+        assert.ok(recovery.quarantined.includes('TX-corrupted.json'));
 
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -488,4 +492,61 @@ state:
     assert.ok(payload.source?.model?.includes('[tag-escaped]'), 'Tag <system> deve ser escapada');
     assert.ok(!payload.source?.session_topic?.includes('---'), 'Régua horizontal deve ser removida');
 });
+
+test('P1-04 Conflict-Aware Auto-Recovery: Marca como RECOVERY_REQUIRED e não deleta se arquivo criado foi alterado pós-crash', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-conflict-recovery-'));
+    try {
+        initProject(tmpDir);
+        const contextDir = path.join(tmpDir, '.ai-context');
+        const transactionsDir = path.join(contextDir, '.pactx', 'transactions');
+        fs.mkdirSync(transactionsDir, { recursive: true });
+
+        // Simula arquivo criado no crash com conteúdo X
+        const orphanAdrPath = path.join(contextDir, 'decisions', 'DEC-002.md');
+        const originalContent = '---\nid: DEC-002\n---\n# Original Decision';
+        const originalHash = crypto.createHash('sha256').update(originalContent).digest('hex');
+
+        // Mas o usuário ou outro processo alterou o arquivo no disco para conteúdo Y pós-crash
+        const modifiedContent = '---\nid: DEC-002\n---\n# Modified by user post-crash';
+        fs.writeFileSync(orphanAdrPath, modifiedContent, 'utf-8');
+
+        const txHash = 'conflict_tx_123';
+        const manifest: TransactionManifest = {
+            txHash,
+            status: 'APPLYING',
+            recoveryAttempts: 0,
+            createdAt: new Date().toISOString(),
+            baseRevision: 'rev1',
+            snapshot: [],
+            createdFiles: [
+                {
+                    relativePath: 'decisions/DEC-002.md',
+                    afterHash: originalHash,
+                }
+            ],
+            plan: {} as any,
+        };
+        fs.writeFileSync(path.join(transactionsDir, `TX-${txHash}.json`), JSON.stringify(manifest, null, 2), 'utf-8');
+
+        // Executa auto-recovery: deve detectar conflito de hash e NÃO deletar o arquivo
+        const recovery = TransactionEngine.runAutoRecovery(contextDir);
+
+        assert.strictEqual(fs.existsSync(orphanAdrPath), true, 'Arquivo modificado pós-crash NÃO deve ser deletado');
+        assert.strictEqual(fs.readFileSync(orphanAdrPath, 'utf-8'), modifiedContent);
+
+        // Manifesto deve ter sido marcado como RECOVERY_REQUIRED
+        const updatedManifest = JSON.parse(fs.readFileSync(path.join(transactionsDir, `TX-${txHash}.json`), 'utf-8'));
+        assert.strictEqual(updatedManifest.status, 'RECOVERY_REQUIRED');
+
+        // [P1-03] Trava de segurança: hasPendingRecovery deve acusar a transação
+        const pending = TransactionEngine.hasPendingRecovery(contextDir);
+        assert.ok(pending);
+        assert.strictEqual(pending.txHash, txHash);
+        assert.strictEqual(pending.status, 'RECOVERY_REQUIRED');
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 

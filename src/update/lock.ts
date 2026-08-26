@@ -3,6 +3,16 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { LockData } from './types';
 
+export function isProcessAlive(pid: number): boolean {
+    if (!pid || typeof pid !== 'number' || pid <= 0) return false;
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (err: any) {
+        return err.code === 'EPERM';
+    }
+}
+
 export class ContextLock {
     private lockPath: string;
     private fd: number | null = null;
@@ -55,14 +65,8 @@ export class ContextLock {
                         }
 
                         if (lockPid && typeof lockPid === 'number') {
-                            try {
-                                // Signal 0 verifica se o PID ainda existe no SO
-                                process.kill(lockPid, 0);
-                            } catch (killErr: any) {
-                                if (killErr.code === 'ESRCH') {
-                                    // Processo não existe mais -> stale lock!
-                                    isStale = true;
-                                }
+                            if (!isProcessAlive(lockPid)) {
+                                isStale = true;
                             }
                         }
 

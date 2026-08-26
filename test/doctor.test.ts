@@ -174,3 +174,42 @@ Active architecture.
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+test('Doctor: cleanTempFiles preserva .tmp de processo ativo (process.pid) e remove de PID morto (>5m)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-doctor-temp-pid-'));
+    try {
+        initProject(tmpDir);
+        const contextDir = path.join(tmpDir, '.ai-context');
+
+        // 1. Cria arquivo .tmp de processo vivo (PID atual) com mtime antigo (>10m)
+        const activePidTmp = path.join(contextDir, `.state.md.${process.pid}.${Date.now()}.rand1.tmp`);
+        fs.writeFileSync(activePidTmp, 'active data', 'utf-8');
+        const oldTime = new Date(Date.now() - 10 * 60 * 1000);
+        fs.utimesSync(activePidTmp, oldTime, oldTime);
+
+        // 2. Cria arquivo .tmp de processo morto (PID 9999999) com mtime antigo (>10m)
+        const deadPidTmp = path.join(contextDir, `.state.md.9999999.${Date.now()}.rand2.tmp`);
+        fs.writeFileSync(deadPidTmp, 'dead data', 'utf-8');
+        fs.utimesSync(deadPidTmp, oldTime, oldTime);
+
+        // 3. Cria arquivo .tmp de processo morto recente (<2m)
+        const recentDeadTmp = path.join(contextDir, `.state.md.9999999.${Date.now()}.rand3.tmp`);
+        fs.writeFileSync(recentDeadTmp, 'recent dead data', 'utf-8');
+
+        // Executa o doctor com --fix
+        renderDoctor(tmpDir, true);
+
+        // O arquivo do processo ativo DEVE ser preservado mesmo antigo
+        assert.strictEqual(fs.existsSync(activePidTmp), true, 'Arquivo .tmp de PID ativo deve ser preservado');
+
+        // O arquivo recente do processo morto DEVE ser preservado (<5m)
+        assert.strictEqual(fs.existsSync(recentDeadTmp), true, 'Arquivo .tmp recente (<5m) deve ser preservado');
+
+        // O arquivo antigo do processo morto DEVE ser removido (>5m e PID morto)
+        assert.strictEqual(fs.existsSync(deadPidTmp), false, 'Arquivo .tmp antigo de PID morto deve ser removido');
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+

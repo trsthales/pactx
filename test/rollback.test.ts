@@ -50,10 +50,24 @@ new_decisions:
         const restoredState = fs.readFileSync(statePath, 'utf-8');
         assert.strictEqual(restoredState, originalState, 'state.md deve ser idêntico ao estado original');
 
-        // Valida que o manifesto da transação foi marcado como ROLLED_BACK
+        // Valida que o manifesto da transação alvo foi marcado como ROLLED_BACK
         const txPath = path.join(contextDir, '.pactx', 'transactions', `TX-${canonicalHash}.json`);
         const manifest: TransactionManifest = JSON.parse(fs.readFileSync(txPath, 'utf-8'));
         assert.strictEqual(manifest.status, 'ROLLED_BACK');
+
+        // Valida que foi gerado um manifesto de transação de Rollback de Primeira Classe (P1-01)
+        const allTxFiles = fs.readdirSync(path.join(contextDir, '.pactx', 'transactions'));
+        const rollbackTxFile = allTxFiles.find(f => {
+            if (!f.startsWith('TX-') || !f.endsWith('.json')) return false;
+            try {
+                const m = JSON.parse(fs.readFileSync(path.join(contextDir, '.pactx', 'transactions', f), 'utf-8'));
+                return m.type === 'ROLLBACK';
+            } catch { return false; }
+        });
+        assert.ok(rollbackTxFile, 'Deve existir um manifesto de transação com type === ROLLBACK');
+        const rollbackManifest: TransactionManifest = JSON.parse(fs.readFileSync(path.join(contextDir, '.pactx', 'transactions', rollbackTxFile!), 'utf-8'));
+        assert.strictEqual(rollbackManifest.status, 'COMMITTED');
+        assert.deepStrictEqual(rollbackManifest.targetTxHashes, [canonicalHash]);
 
         // Valida que o ledger removeu a transação
         const ledger: HistoryLedger = JSON.parse(fs.readFileSync(path.join(contextDir, '.pactx', 'ledger.json'), 'utf-8'));

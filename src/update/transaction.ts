@@ -5,7 +5,9 @@ import pc from 'picocolors';
 import {
     TransactionManifest,
     TransactionStatus,
+    TransactionType,
     TransactionSnapshotItem,
+    CreatedFileEntry,
     MutationPlan
 } from './types';
 import { ContextLock } from './lock';
@@ -39,8 +41,10 @@ export class TransactionEngine {
         contextDir: string,
         plan: MutationPlan,
         snapshotMap: Map<string, string | null>,
-        createdFiles: string[],
-        baseRevision: string
+        createdFiles: Array<string | CreatedFileEntry>,
+        baseRevision: string,
+        type: TransactionType = 'APPLY',
+        targetTxHashes?: string[]
     ): TransactionManifest {
         const snapshot: TransactionSnapshotItem[] = [];
 
@@ -48,7 +52,8 @@ export class TransactionEngine {
             const contentHash = content !== null
                 ? crypto.createHash('sha256').update(content).digest('hex')
                 : '';
-            const relativePath = path.relative(contextDir, path.resolve(filePath)).replace(/\\/g, '/');
+            const resolvedPath = path.resolve(contextDir, filePath);
+            const relativePath = path.relative(contextDir, resolvedPath).replace(/\\/g, '/');
             snapshot.push({
                 path: relativePath,
                 relativePath,
@@ -57,23 +62,35 @@ export class TransactionEngine {
             });
         }
 
-        const relCreatedFiles = createdFiles.map(f =>
-            path.relative(contextDir, path.resolve(f)).replace(/\\/g, '/')
-        );
+        const normalizedCreatedFiles: CreatedFileEntry[] = createdFiles.map(f => {
+            if (typeof f === 'string') {
+                const resolved = path.resolve(contextDir, f);
+                const rel = path.relative(contextDir, resolved).replace(/\\/g, '/');
+                return { relativePath: rel, afterHash: '' };
+            }
+            const resolved = path.resolve(contextDir, f.relativePath);
+            const rel = path.relative(contextDir, resolved).replace(/\\/g, '/');
+            return {
+                relativePath: rel,
+                afterHash: f.afterHash || '',
+            };
+        });
 
         const manifest: TransactionManifest = {
             txHash: plan.canonicalHash,
+            type,
+            targetTxHashes: targetTxHashes && targetTxHashes.length > 0 ? targetTxHashes : undefined,
             status: 'PREPARED',
             recoveryAttempts: 0,
             createdAt: new Date().toISOString(),
             source: plan.source ? {
-                type: 'conversation',
+                type: plan.source.type || 'conversation',
                 model: plan.source.model,
                 sessionTopic: plan.source.sessionTopic,
             } : undefined,
             baseRevision: baseRevision || plan.baseRevision || '',
             snapshot,
-            createdFiles: relCreatedFiles,
+            createdFiles: normalizedCreatedFiles,
             plan,
         };
 
@@ -134,10 +151,29 @@ export class TransactionEngine {
     }
 
     /**
+     * Checks if there are any pending failed or recovery-required transactions.
+     */
+    static hasPendingRecovery(contextDir: string): TransactionManifest | null {
+        const transactionsDir = TransactionEngine.getTransactionsDir(contextDir);
+        if (!fs.existsSync(transactionsDir)) return null;
+        const files = fs.readdirSync(transactionsDir).filter(f => f.startsWith('TX-') && f.endsWith('.json'));
+        for (const file of files) {
+            try {
+                const raw = fs.readFileSync(path.join(transactionsDir, file), 'utf-8');
+                const manifest: TransactionManifest = JSON.parse(raw);
+                if (manifest.status === 'RECOVERY_REQUIRED' || manifest.status === 'FAILED') {
+                    return manifest;
+                }
+            } catch {}
+        }
+        return null;
+    }
+
+    /**
      * Scans .pactx/transactions/ for orphaned PREPARED or APPLYING transactions
      * and performs auto-recovery under ContextLock with anti-loop protection.
      */
-    static runAutoRecovery(contextDir: string, lockHeld: boolean = false): { recovered: string[]; failed: string[] } {
+    static runAutoRecovery(contextDir: string, lockHeld: boolean = false): { recovered: string[]; failed: string[]; quarantined: string[] } {
         let lock: ContextLock | null = null;
         if (!lockHeld) {
             lock = new ContextLock(contextDir);
@@ -146,6 +182,7 @@ export class TransactionEngine {
 
         const recovered: string[] = [];
         const failed: string[] = [];
+        const quarantined: string[] = [];
 
         try {
             const transactionsDir = TransactionEngine.getTransactionsDir(contextDir);
@@ -159,8 +196,28 @@ export class TransactionEngine {
                     const raw = fs.readFileSync(txPath, 'utf-8');
                     manifest = JSON.parse(raw);
                 } catch {
-                    // Arquivo JSON corrompido durante PREPARED: remove o arquivo órfão com segurança
-                    try { fs.unlinkSync(txPath); } catch {}
+                    // [P1-02] Quarentena de WAL Corrompido: move para .pactx/quarantine/ sem nunca deletar
+                    const quarantineDir = path.join(contextDir, '.pactx', 'quarantine');
+                    if (!fs.existsSync(quarantineDir)) {
+                        fs.mkdirSync(quarantineDir, { recursive: true });
+                    }
+                    const corruptDest = path.join(quarantineDir, `${path.basename(file, '.json')}.corrupt`);
+                    try {
+                        fs.renameSync(txPath, corruptDest);
+                    } catch {
+                        try {
+                            const raw = fs.readFileSync(txPath, 'utf-8');
+                            fs.writeFileSync(corruptDest, raw, 'utf-8');
+                            fs.unlinkSync(txPath);
+                        } catch {}
+                    }
+                    quarantined.push(file);
+                    console.error(pc.red(`[PactX] Auto-recovery: Corrupt transaction manifest quarantined: ${file}. Recovery required before mutating.`));
+                    failed.push(file);
+                    continue;
+                }
+
+                if (manifest.status === 'RECOVERY_REQUIRED' || manifest.status === 'FAILED') {
                     continue;
                 }
 
@@ -186,6 +243,32 @@ export class TransactionEngine {
                             }
                         }
 
+                        // [P1-04] Recovery Ciente de Conflitos: verifica se arquivos criados foram modificados pós-crash
+                        let conflictDetected = false;
+                        if (Array.isArray(manifest.createdFiles)) {
+                            for (const entry of manifest.createdFiles) {
+                                const relPath = typeof entry === 'string' ? entry : entry.relativePath;
+                                const expectedHash = typeof entry === 'string' ? '' : entry.afterHash;
+                                const destPath = TransactionEngine.resolveAndValidateJail(contextDir, relPath);
+                                if (fs.existsSync(destPath) && expectedHash) {
+                                    const currentContent = fs.readFileSync(destPath, 'utf-8');
+                                    const currentHash = crypto.createHash('sha256').update(currentContent).digest('hex');
+                                    if (currentHash !== expectedHash) {
+                                        conflictDetected = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (conflictDetected) {
+                            manifest.status = 'RECOVERY_REQUIRED';
+                            safeAtomicWriteFileSync(txPath, JSON.stringify(manifest, null, 2), 'utf-8');
+                            console.error(pc.red(`[PactX] Auto-recovery: Conflict detected for TX-${manifest.txHash} (created file modified post-crash). Status set to RECOVERY_REQUIRED.`));
+                            failed.push(manifest.txHash);
+                            continue;
+                        }
+
                         // 2. Restauração dos arquivos canônicos com validação de Jail
                         for (const item of manifest.snapshot) {
                             const destPath = TransactionEngine.resolveAndValidateJail(contextDir, item.relativePath || item.path);
@@ -199,22 +282,22 @@ export class TransactionEngine {
                         }
 
                         // 3. Remoção de arquivos criados inconsistentes com validação de Jail (PREPARED e APPLYING)
-                        const filesToDelete = new Set<string>();
                         if (Array.isArray(manifest.createdFiles)) {
-                            for (const f of manifest.createdFiles) filesToDelete.add(f);
-                        }
-                        if (manifest.plan?.operations?.createdAdrs) {
-                            for (const adr of manifest.plan.operations.createdAdrs) {
-                                if (adr.targetPath) {
-                                    const rel = path.relative(contextDir, path.resolve(adr.targetPath)).replace(/\\/g, '/');
-                                    filesToDelete.add(rel);
+                            for (const entry of manifest.createdFiles) {
+                                const relPath = typeof entry === 'string' ? entry : entry.relativePath;
+                                const expectedHash = typeof entry === 'string' ? '' : entry.afterHash;
+                                const destPath = TransactionEngine.resolveAndValidateJail(contextDir, relPath);
+                                if (fs.existsSync(destPath)) {
+                                    if (!expectedHash) {
+                                        try { fs.unlinkSync(destPath); } catch {}
+                                    } else {
+                                        const currentContent = fs.readFileSync(destPath, 'utf-8');
+                                        const currentHash = crypto.createHash('sha256').update(currentContent).digest('hex');
+                                        if (currentHash === expectedHash) {
+                                            try { fs.unlinkSync(destPath); } catch {}
+                                        }
+                                    }
                                 }
-                            }
-                        }
-                        for (const createdPath of filesToDelete) {
-                            const destPath = TransactionEngine.resolveAndValidateJail(contextDir, createdPath);
-                            if (fs.existsSync(destPath)) {
-                                try { fs.unlinkSync(destPath); } catch {}
                             }
                         }
 
@@ -226,7 +309,8 @@ export class TransactionEngine {
                                 const ledger = JSON.parse(ledgerRaw);
                                 if (Array.isArray(ledger.applied_updates)) {
                                     const initialLen = ledger.applied_updates.length;
-                                    ledger.applied_updates = ledger.applied_updates.filter((u: any) => u.hash !== manifest.txHash);
+                                    const hashesToRemove = new Set([manifest.txHash, ...(manifest.targetTxHashes || [])]);
+                                    ledger.applied_updates = ledger.applied_updates.filter((u: any) => !hashesToRemove.has(u.hash));
                                     if (ledger.applied_updates.length !== initialLen) {
                                         safeAtomicWriteFileSync(historyFile, JSON.stringify(ledger, null, 2), 'utf-8');
                                     }
@@ -251,13 +335,23 @@ export class TransactionEngine {
             }
         }
 
-        return { recovered, failed };
+        return { recovered, failed, quarantined };
     }
 
     /**
-     * Prunes finalized transactions older than maxAgeDays or exceeding maxTransactions limit.
+     * Prunes finalized transactions older than maxAgeDays or exceeding maxTransactions limit under ContextLock.
      */
-    static pruneTransactions(contextDir: string, maxTransactions: number = 50, maxAgeDays: number = 30): void {
+    static pruneTransactions(
+        contextDir: string,
+        maxTransactions: number = 50,
+        maxAgeDays: number = 30,
+        lockHeld: boolean = false
+    ): void {
+        let lock: ContextLock | null = null;
+        if (!lockHeld) {
+            lock = new ContextLock(contextDir);
+            lock.acquire();
+        }
         try {
             const transactionsDir = TransactionEngine.getTransactionsDir(contextDir);
             const files = fs.readdirSync(transactionsDir).filter(f => f.startsWith('TX-') && f.endsWith('.json'));
@@ -271,6 +365,11 @@ export class TransactionEngine {
                 try {
                     const raw = fs.readFileSync(txPath, 'utf-8');
                     const manifest: TransactionManifest = JSON.parse(raw);
+
+                    // NUNCA podar transações RECOVERY_REQUIRED ou FAILED
+                    if (manifest.status === 'RECOVERY_REQUIRED' || manifest.status === 'FAILED') {
+                        continue;
+                    }
 
                     if (manifest.status === 'COMMITTED' || manifest.status === 'ROLLED_BACK') {
                         const createdTime = manifest.createdAt ? new Date(manifest.createdAt).getTime() : 0;
@@ -294,6 +393,10 @@ export class TransactionEngine {
             }
         } catch {
             // Pruning is non-blocking
+        } finally {
+            if (lock) {
+                lock.release();
+            }
         }
     }
 }
