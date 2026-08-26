@@ -2,15 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HistoryLedger, HistoryEntry } from './types';
 import { safeAtomicWriteFileSync } from './applier';
+import { ContextLock } from './lock';
 
 const MAX_HISTORY_ENTRIES = 500;
 
 /**
  * Ensures the internal storage layout (.ai-context/.pactx/transactions/) exists,
- * seamlessly migrates legacy .pactx-history.json to .pactx/ledger.json,
+ * seamlessly migrates legacy .pactx-history.json to .pactx/ledger.json under ContextLock,
  * merges dual-layout conflicts deduplicating by hash, and cleans up legacy root lockfiles.
  */
-export function ensureStorageLayout(contextDir: string): void {
+export function ensureStorageLayout(contextDir: string, lockHeld: boolean = false): void {
     const pactxDir = path.join(contextDir, '.pactx');
     const transactionsDir = path.join(pactxDir, 'transactions');
 
@@ -19,30 +20,43 @@ export function ensureStorageLayout(contextDir: string): void {
     }
 
     const legacyHistoryPath = path.join(contextDir, '.pactx-history.json');
-    const currentLedgerPath = path.join(pactxDir, 'ledger.json');
+    const legacyLockPath = path.join(contextDir, '.pactx.lock');
+    const hasLegacy = fs.existsSync(legacyHistoryPath) || fs.existsSync(legacyLockPath);
 
-    const hasLegacy = fs.existsSync(legacyHistoryPath);
-    const hasCurrent = fs.existsSync(currentLedgerPath);
+    if (!hasLegacy) {
+        return;
+    }
 
-    if (hasLegacy && !hasCurrent) {
-        // Migração simples v0.2.x -> v0.3.0
-        try {
-            const raw = fs.readFileSync(legacyHistoryPath, 'utf-8');
-            // Validar que é JSON antes de gravar
-            JSON.parse(raw);
-            safeAtomicWriteFileSync(currentLedgerPath, raw, 'utf-8');
-            fs.unlinkSync(legacyHistoryPath);
-        } catch {
-            // Se o arquivo contiver JSON inválido ou falhar, movemos mesmo assim para o applier/planner falhar com fail-closed
+    // Se existem arquivos legados que necessitam de migração/limpeza, executa sob ContextLock (P2-1)
+    let lock: ContextLock | null = null;
+    if (!lockHeld) {
+        lock = new ContextLock(contextDir);
+        lock.acquire();
+    }
+
+    try {
+        const currentLedgerPath = path.join(pactxDir, 'ledger.json');
+        const hasLegacyHistory = fs.existsSync(legacyHistoryPath);
+        const hasCurrentLedger = fs.existsSync(currentLedgerPath);
+        if (hasLegacyHistory && !hasCurrentLedger) {
+            // Migração simples v0.2.x -> v0.3.0
             try {
-                fs.renameSync(legacyHistoryPath, currentLedgerPath);
-            } catch {
                 const raw = fs.readFileSync(legacyHistoryPath, 'utf-8');
+                // Validar que é JSON antes de gravar
+                JSON.parse(raw);
                 safeAtomicWriteFileSync(currentLedgerPath, raw, 'utf-8');
-                try { fs.unlinkSync(legacyHistoryPath); } catch {}
+                fs.unlinkSync(legacyHistoryPath);
+            } catch {
+                // Se o arquivo contiver JSON inválido ou falhar, movemos mesmo assim para o applier/planner falhar com fail-closed
+                try {
+                    fs.renameSync(legacyHistoryPath, currentLedgerPath);
+                } catch {
+                    const raw = fs.readFileSync(legacyHistoryPath, 'utf-8');
+                    safeAtomicWriteFileSync(currentLedgerPath, raw, 'utf-8');
+                    try { fs.unlinkSync(legacyHistoryPath); } catch {}
+                }
             }
-        }
-    } else if (hasLegacy && hasCurrent) {
+        } else if (hasLegacyHistory && hasCurrentLedger) {
         // Conflito de layout duplo (downgrade / upgrade)
         try {
             const legacyRaw = fs.readFileSync(legacyHistoryPath, 'utf-8');
@@ -90,16 +104,20 @@ export function ensureStorageLayout(contextDir: string): void {
         }
     }
 
-    // Limpeza de lock legado na raiz de .ai-context/
-    const legacyLockPath = path.join(contextDir, '.pactx.lock');
-    if (fs.existsSync(legacyLockPath)) {
-        try {
-            const stat = fs.statSync(legacyLockPath);
-            if (Date.now() - stat.mtimeMs > 30000) {
-                fs.unlinkSync(legacyLockPath);
+        // Limpeza de lock legado na raiz de .ai-context/
+        if (fs.existsSync(legacyLockPath)) {
+            try {
+                const stat = fs.statSync(legacyLockPath);
+                if (Date.now() - stat.mtimeMs > 30000) {
+                    fs.unlinkSync(legacyLockPath);
+                }
+            } catch {
+                try { fs.unlinkSync(legacyLockPath); } catch {}
             }
-        } catch {
-            try { fs.unlinkSync(legacyLockPath); } catch {}
+        }
+    } finally {
+        if (lock) {
+            lock.release();
         }
     }
 }

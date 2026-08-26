@@ -413,6 +413,37 @@ export function runDiagnostics(cwd: string = process.cwd(), fix: boolean = false
         fixable: isStaleLock,
     });
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Rule 9: Deprecated Requirement Links (P2-2)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const deprecatedReqWarnings: string[] = [];
+    if (fs.existsSync(decisionsDir)) {
+        const files = fs.readdirSync(decisionsDir).filter(f => f.endsWith('.md'));
+        for (const file of files) {
+            const { data } = parseFrontmatter(fs.readFileSync(path.join(decisionsDir, file), 'utf-8'));
+            const status = (data.status || 'active').toLowerCase();
+            if (status === 'superseded') continue;
+            const adrId = (data.id || file.replace('.md', '')).toUpperCase();
+            if (Array.isArray(data.satisfies)) {
+                for (const satId of data.satisfies) {
+                    const normReq = String(satId).toUpperCase();
+                    const reqItem = existingReqMap.get(normReq);
+                    if (reqItem && (reqItem.status || 'active').toLowerCase() === 'deprecated') {
+                        deprecatedReqWarnings.push(`Active decision ${adrId} satisfies deprecated requirement ${normReq}.`);
+                    }
+                }
+            }
+        }
+    }
+
+    results.push({
+        id: 9,
+        name: 'Deprecated Requirement Links',
+        status: deprecatedReqWarnings.length === 0 ? 'pass' : 'warn',
+        message: deprecatedReqWarnings.length === 0 ? 'No active ADRs linked to deprecated requirements' : `${deprecatedReqWarnings.length} active ADR(s) linked to deprecated requirement(s)`,
+        details: deprecatedReqWarnings.length > 0 ? deprecatedReqWarnings : undefined,
+    });
+
     // Clean orphan .tmp files if fix is enabled
     if (fix) {
         function cleanTempFiles(dir: string) {
@@ -473,7 +504,7 @@ export function renderDoctor(cwd: string = process.cwd(), fix: boolean = false):
     }
 
     if (report.exitCode === 0) {
-        console.log(pc.green('🎉 All 8 integrity checks passed! Repository health is 100%.\n'));
+        console.log(pc.green('🎉 All 9 integrity checks passed! Repository health is 100%.\n'));
     } else if (report.exitCode === 1) {
         console.log(pc.yellow('⚠ Warnings detected. The repository is operational, but review the warnings above.\n'));
     } else {

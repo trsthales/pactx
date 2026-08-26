@@ -239,6 +239,7 @@ new_glossary_terms:
 
 ## Documentation
 
+- ⚡ **[Complete Features Catalog](./docs/FEATURES.md)** — Exhaustive guide covering all CLI commands, WAL engine, and security models.
 - 📖 **[Step-by-Step Tutorial](./docs/TUTORIAL.md)** — Practical guide on how to integrate and use `pactx` in your daily workflow.
 - 🏛️ **[Technical & Architecture Spec](./docs/ARCHITECTURE.md)** — Deep dive into the closed-loop engine, security jail, and transactional guarantees.
 

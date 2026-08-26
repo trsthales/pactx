@@ -240,36 +240,7 @@ O `pactx update` trata todas as saídas de IA como **entradas não confiáveis**
 
 ## Documentação
 
-- 📖 **[Tutorial Passo a Passo](./docs/TUTORIAL.pt-BR.md)** — Guia prático sobre como integrar e usar o `pactx` no seu fluxo diário.
-- 🏛️ **[Especificação Técnica & Arquitetura](./docs/ARCHITECTURE.pt-BR.md)** — Detalhamento técnico sobre o motor de loop fechado, modelo de segurança e garantias transacionais.
-
----
-
-## Licença
-
-Distribuído sob a licença **MIT**. Consulte o arquivo [`LICENSE`](./LICENSE) para obter mais informações.izados e registrados com hash SHA-256 no arquivo `.ai-context/.pactx-history.json`. Executar o mesmo clipboard novamente resulta em No-Op seguro.
-5. **Revisão Humana Anti-Envenenamento:** O terminal exibe o texto literal e completo de cada decisão, fato e hipótese antes de solicitar a confirmação do desenvolvedor.
-6. **File Locking Concorrente:** Proteção contra escritas simultâneas em múltiplos terminais via `.pactx.lock` exclusivo e tratamento de sinais (`SIGINT`, `SIGTERM`, `SIGHUP`).
-
----
-
-## Especificação dos Arquivos (`.ai-context/`)
-
-```text
-.ai-context/
-├── project.md            # Visão, stack tecnológica e regras invioláveis
-├── state.md              # Tarefa ativa, itens concluídos, fatos e hipóteses descartadas
-├── glossary.md           # Termos de domínio, contratos de API e entidades
-├── .pactx-history.json   # Ledger de auditoria com hashes SHA-256 aplicados
-└── decisions/
-    ├── DEC-001.md        # ADRs ativas ou obsoletas com linhagem estrutural
-    └── DEC-002.md
-```
-
----
-
-## Documentação
-
+- ⚡ **[Catálogo Completo de Funcionalidades](./docs/FEATURES.pt-BR.md)** — Guia exaustivo cobrindo todos os comandos da CLI, motor WAL e modelo de segurança.
 - 📖 **[Tutorial Passo a Passo](./docs/TUTORIAL.pt-BR.md)** — Guia prático sobre como integrar e usar o `pactx` no seu fluxo diário.
 - 🏛️ **[Especificação Técnica & Arquitetura](./docs/ARCHITECTURE.pt-BR.md)** — Detalhamento técnico sobre o motor de loop fechado, modelo de segurança e garantias transacionais.
 

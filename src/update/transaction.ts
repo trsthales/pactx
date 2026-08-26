@@ -198,13 +198,23 @@ export class TransactionEngine {
                             }
                         }
 
-                        // 3. Remoção de arquivos criados inconsistentes com validação de Jail
+                        // 3. Remoção de arquivos criados inconsistentes com validação de Jail (PREPARED e APPLYING)
+                        const filesToDelete = new Set<string>();
                         if (Array.isArray(manifest.createdFiles)) {
-                            for (const createdPath of manifest.createdFiles) {
-                                const destPath = TransactionEngine.resolveAndValidateJail(contextDir, createdPath);
-                                if (fs.existsSync(destPath)) {
-                                    try { fs.unlinkSync(destPath); } catch {}
+                            for (const f of manifest.createdFiles) filesToDelete.add(f);
+                        }
+                        if (manifest.plan?.operations?.createdAdrs) {
+                            for (const adr of manifest.plan.operations.createdAdrs) {
+                                if (adr.targetPath) {
+                                    const rel = path.relative(contextDir, path.resolve(adr.targetPath)).replace(/\\/g, '/');
+                                    filesToDelete.add(rel);
                                 }
+                            }
+                        }
+                        for (const createdPath of filesToDelete) {
+                            const destPath = TransactionEngine.resolveAndValidateJail(contextDir, createdPath);
+                            if (fs.existsSync(destPath)) {
+                                try { fs.unlinkSync(destPath); } catch {}
                             }
                         }
 
