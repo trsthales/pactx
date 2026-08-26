@@ -1,6 +1,6 @@
 {
   "name": "@trsthales/pactx",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Universal context continuity & handoff engine for AI-assisted development",
   "bin": {
     "pactx": "./dist/cli.js"

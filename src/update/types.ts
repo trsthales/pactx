@@ -139,7 +139,14 @@ export interface LockData {
     heartbeatAt: number;
 }
 
-export type TransactionStatus = 'PREPARED' | 'APPLYING' | 'COMMITTED' | 'ROLLED_BACK' | 'FAILED';
+export type TransactionType = 'APPLY' | 'ROLLBACK';
+
+export type TransactionStatus = 'PREPARED' | 'APPLYING' | 'COMMITTED' | 'ROLLED_BACK' | 'FAILED' | 'RECOVERY_REQUIRED';
+
+export interface CreatedFileEntry {
+    relativePath: string;
+    afterHash: string; // SHA-256 do arquivo após criação para checagem anti-conflito no recovery
+}
 
 export interface TransactionSnapshotItem {
     path: string;
@@ -150,6 +157,8 @@ export interface TransactionSnapshotItem {
 
 export interface TransactionManifest {
     txHash: string;
+    type?: TransactionType; // 'APPLY' (padrão) ou 'ROLLBACK'
+    targetTxHashes?: string[]; // Hashes das transações revertidas caso type === 'ROLLBACK'
     status: TransactionStatus;
     recoveryAttempts: number;
     createdAt: string;
@@ -160,6 +169,6 @@ export interface TransactionManifest {
     };
     baseRevision: string;
     snapshot: TransactionSnapshotItem[];
-    createdFiles: string[];
+    createdFiles: Array<string | CreatedFileEntry>;
     plan: MutationPlan;
 }

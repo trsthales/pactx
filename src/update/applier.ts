@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import yaml from 'yaml';
-import { MutationPlan, HistoryLedger, RequirementItem } from './types';
+import { MutationPlan, HistoryLedger, RequirementItem, CreatedFileEntry } from './types';
 import { ContextLock } from './lock';
 import { getCurrentContextRevision } from '../composer';
 import { getNextAdrId } from './planner';
@@ -98,6 +99,13 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
     const lock = new ContextLock(contextDir);
     lock.acquire();
 
+    // [P1-03] Trava de segurança: impede novas mutações se houver transações que requerem recuperação
+    const pendingRecovery = TransactionEngine.hasPendingRecovery(contextDir);
+    if (pendingRecovery) {
+        lock.release();
+        throw new Error(`Repository blocked: Transaction TX-${pendingRecovery.txHash} requires recovery (Status: ${pendingRecovery.status}). Run 'pactx doctor --fix' or resolve manually before mutating.`);
+    }
+
     // Revalidação Obrigatória de Concorrência Otimista (Final OCC Check) sob Lock
     const currentRev = getCurrentContextRevision(contextDir);
     if (plan.baseRevision && plan.baseRevision !== currentRev) {
@@ -112,7 +120,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
     // Snapshot em Memória para Rollback Transacional
     const snapshot = new Map<string, string | null>(); // path -> content (null se arquivo não existia)
-    const createdFiles: string[] = [];
+    const createdFiles: CreatedFileEntry[] = [];
 
     const recordSnapshot = (filePath: string) => {
         if (!snapshot.has(filePath)) {
@@ -211,11 +219,30 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
         const requirementsPath = path.join(contextDir, 'requirements.md');
 
-        // Pré-gravação de Snapshot Completo para WAL
+        // Pré-gravação de Snapshot Completo para WAL e cálculo de afterHash para createdFiles (P1-04)
         for (const adr of plan.operations.createdAdrs || []) {
             recordSnapshot(adr.targetPath);
             if (snapshot.get(adr.targetPath) === null) {
-                createdFiles.push(adr.targetPath);
+                const frontmatter: any = {
+                    spec_version: '1.0',
+                    id: adr.id,
+                    title: sanitizeBodyField(adr.title),
+                    status: 'active',
+                };
+                if (adr.satisfies && adr.satisfies.length > 0) {
+                    frontmatter.satisfies = adr.satisfies;
+                }
+                frontmatter.date = adr.date;
+                const frontmatterYaml = yaml.stringify(frontmatter).trim();
+                const sanitizedDecision = sanitizeBodyField(adr.decision);
+                const sanitizedReason = sanitizeBodyField(adr.reason);
+                const body = `# Decision\n${sanitizedDecision}\n\n# Reason\n${sanitizedReason}\n`;
+                const fullContent = `---\n${frontmatterYaml}\n---\n\n${body}`;
+                const afterHash = crypto.createHash('sha256').update(fullContent).digest('hex');
+                createdFiles.push({
+                    relativePath: path.relative(contextDir, adr.targetPath).replace(/\\/g, '/'),
+                    afterHash,
+                });
             }
         }
         for (const adr of plan.operations.supersededAdrs || []) {
@@ -224,7 +251,10 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
         if ((plan.operations.createdRequirements?.length ?? 0) > 0 || (plan.operations.updatedRequirements?.length ?? 0) > 0 || fs.existsSync(requirementsPath)) {
             recordSnapshot(requirementsPath);
             if (snapshot.get(requirementsPath) === null) {
-                createdFiles.push(requirementsPath);
+                createdFiles.push({
+                    relativePath: path.relative(contextDir, requirementsPath).replace(/\\/g, '/'),
+                    afterHash: '',
+                });
             }
         }
         if (plan.operations.stateUpdate) {
@@ -603,7 +633,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
         // WAL: 3. COMMITTED
         TransactionEngine.markCommitted(contextDir, plan.canonicalHash);
-        TransactionEngine.pruneTransactions(contextDir);
+        TransactionEngine.pruneTransactions(contextDir, 50, 30, true);
 
     } catch (error: any) {
         // FAIL-CLOSED: Rollback Transacional Instantâneo

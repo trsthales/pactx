@@ -7,7 +7,7 @@ const program = new Command();
 program
     .name('pactx')
     .description('Universal context continuity & handoff engine for AI-assisted development')
-    .version('0.3.0');
+    .version('0.3.1');
 
 program
     .command('init')

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import readline from 'node:readline';
 import pc from 'picocolors';
 import { bootstrapPactx } from '../core/bootstrap';
@@ -7,6 +8,7 @@ import { ContextLock } from '../update/lock';
 import { TransactionEngine } from '../update/transaction';
 import { TransactionManifest, HistoryLedger } from '../update/types';
 import { safeAtomicWriteFileSync } from '../update/applier';
+import { getCurrentContextRevision } from '../composer';
 
 export interface RollbackOptions {
     yes?: boolean;
@@ -30,15 +32,15 @@ export async function executeRollback(
         // 1. Auto-recovery de integridade prévio sob lock
         TransactionEngine.runAutoRecovery(contextDir, true);
 
-        // 2. Coleta de todas as transações COMMITTED
-        const files = fs.readdirSync(transactionsDir).filter(f => f.startsWith('TX-') && f.endsWith('.json') && !f.startsWith('TX-rollback-'));
+        // 2. Coleta de todas as transações COMMITTED (que não sejam do tipo ROLLBACK)
+        const files = fs.readdirSync(transactionsDir).filter(f => f.startsWith('TX-') && f.endsWith('.json'));
         const committedManifests: TransactionManifest[] = [];
 
         for (const file of files) {
             try {
                 const raw = fs.readFileSync(path.join(transactionsDir, file), 'utf-8');
                 const manifest: TransactionManifest = JSON.parse(raw);
-                if (manifest.status === 'COMMITTED') {
+                if (manifest.status === 'COMMITTED' && manifest.type !== 'ROLLBACK') {
                     committedManifests.push(manifest);
                 }
             } catch {}
@@ -115,6 +117,7 @@ export async function executeRollback(
 
         // Fila de rollback em ordem LIFO estrita
         const rollbackQueue = [...subsequentTxs.reverse(), targetTx];
+        const targetTxHashes = rollbackQueue.map(t => t.txHash);
 
         // 5. Exibição do Plano de Rollback
         console.log(pc.bold(pc.yellow(`\n⏪ PactX Rollback Plan (${rollbackQueue.length} transaction${rollbackQueue.length > 1 ? 's' : ''} to revert):`)));
@@ -129,7 +132,8 @@ export async function executeRollback(
             if (tx.createdFiles && tx.createdFiles.length > 0) {
                 console.log(pc.red('   • Files to Delete:'));
                 for (const f of tx.createdFiles) {
-                    console.log(pc.red(`     [-] ${path.relative(projectRoot, f)}`));
+                    const rel = typeof f === 'string' ? f : f.relativePath;
+                    console.log(pc.red(`     [-] ${rel}`));
                 }
             }
 
@@ -137,7 +141,7 @@ export async function executeRollback(
                 console.log(pc.yellow('   • Files to Restore from Snapshot:'));
                 for (const s of tx.snapshot) {
                     if (s.content !== null) {
-                        console.log(pc.yellow(`     [↺] ${path.relative(projectRoot, s.path)}`));
+                        console.log(pc.yellow(`     [↺] ${s.relativePath || s.path}`));
                     }
                 }
             }
@@ -163,16 +167,66 @@ export async function executeRollback(
             return;
         }
 
-        // 6. Execução do Rollback WAL-Protected em ordem LIFO
-        for (const tx of rollbackQueue) {
-            const rollbackManifestPath = path.join(transactionsDir, `TX-rollback-${tx.txHash}.json`);
-            safeAtomicWriteFileSync(rollbackManifestPath, JSON.stringify({
-                status: 'APPLYING',
-                targetTxHash: tx.txHash,
-                startedAt: new Date().toISOString(),
-            }, null, 2), 'utf-8');
+        // 6. Preparação da Transação WAL de Rollback de Primeira Classe (P1-01 & P1-12)
+        const rollbackTimestamp = Date.now();
+        const rollbackTxHash = crypto.createHash('sha256')
+            .update(`rollback-${targetTxHashes.join('-')}-${rollbackTimestamp}`)
+            .digest('hex');
 
-            // 6.1. Restauração dos arquivos a partir do snapshot com validação de Jail
+        // Cria snapshot em memória do estado atual antes da reversão
+        const rollbackSnapshotMap = new Map<string, string | null>();
+        for (const tx of rollbackQueue) {
+            for (const item of tx.snapshot) {
+                const targetPath = TransactionEngine.resolveAndValidateJail(contextDir, item.relativePath || item.path);
+                if (!rollbackSnapshotMap.has(targetPath)) {
+                    rollbackSnapshotMap.set(targetPath, fs.existsSync(targetPath) ? fs.readFileSync(targetPath, 'utf-8') : null);
+                }
+            }
+            if (Array.isArray(tx.createdFiles)) {
+                for (const f of tx.createdFiles) {
+                    const rel = typeof f === 'string' ? f : f.relativePath;
+                    const targetPath = TransactionEngine.resolveAndValidateJail(contextDir, rel);
+                    if (!rollbackSnapshotMap.has(targetPath)) {
+                        rollbackSnapshotMap.set(targetPath, fs.existsSync(targetPath) ? fs.readFileSync(targetPath, 'utf-8') : null);
+                    }
+                }
+            }
+        }
+        if (fs.existsSync(historyFile) && !rollbackSnapshotMap.has(historyFile)) {
+            rollbackSnapshotMap.set(historyFile, fs.readFileSync(historyFile, 'utf-8'));
+        }
+
+        const rollbackPlan = {
+            schemaVersion: '1.1',
+            canonicalHash: rollbackTxHash,
+            isAlreadyApplied: false,
+            warnings: [],
+            operations: {
+                createdRequirements: [],
+                updatedRequirements: [],
+                createdAdrs: [],
+                supersededAdrs: [],
+                appendedGlossaryTerms: [],
+            },
+        };
+
+        const currentRev = getCurrentContextRevision(contextDir);
+        TransactionEngine.createTransaction(
+            contextDir,
+            rollbackPlan,
+            rollbackSnapshotMap,
+            [],
+            currentRev,
+            'ROLLBACK',
+            targetTxHashes
+        );
+
+        // Marca a transação de rollback como APPLYING
+        TransactionEngine.markApplying(contextDir, rollbackTxHash);
+
+        // 7. Aplica a reversão de todas as transações da fila
+        for (const tx of rollbackQueue) {
+            // 7.1. Restaura os arquivos a partir do snapshot
             for (const item of tx.snapshot) {
                 const destPath = TransactionEngine.resolveAndValidateJail(contextDir, item.relativePath || item.path);
                 if (item.content === null) {
@@ -184,34 +238,43 @@ export async function executeRollback(
                 }
             }
 
-            // 6.2. Deleção física de arquivos criados com validação de Jail
+            // 7.2. Deleção de arquivos criados
             if (Array.isArray(tx.createdFiles)) {
-                for (const createdPath of tx.createdFiles) {
-                    const destPath = TransactionEngine.resolveAndValidateJail(contextDir, createdPath);
+                for (const createdEntry of tx.createdFiles) {
+                    const relPath = typeof createdEntry === 'string' ? createdEntry : createdEntry.relativePath;
+                    const expectedHash = typeof createdEntry === 'string' ? '' : createdEntry.afterHash;
+                    const destPath = TransactionEngine.resolveAndValidateJail(contextDir, relPath);
                     if (fs.existsSync(destPath)) {
-                        try { fs.unlinkSync(destPath); } catch {}
+                        if (!expectedHash) {
+                            try { fs.unlinkSync(destPath); } catch {}
+                        } else {
+                            const currentContent = fs.readFileSync(destPath, 'utf-8');
+                            const currentHash = crypto.createHash('sha256').update(currentContent).digest('hex');
+                            if (currentHash === expectedHash) {
+                                try { fs.unlinkSync(destPath); } catch {}
+                            }
+                        }
                     }
                 }
             }
 
-            // 6.3. Atualização do ledger de auditoria
-            let ledger: HistoryLedger = { version: '1.0', applied_updates: [] };
-            if (fs.existsSync(historyFile)) {
-                try {
-                    ledger = JSON.parse(fs.readFileSync(historyFile, 'utf-8'));
-                } catch {}
-            }
-            ledger.applied_updates = (ledger.applied_updates || []).filter(u => u.hash !== tx.txHash);
-            safeAtomicWriteFileSync(historyFile, JSON.stringify(ledger, null, 2), 'utf-8');
-
-            // 6.4. Marcação do manifesto como ROLLED_BACK
+            // 7.3. Marca o manifesto alvo como ROLLED_BACK
             TransactionEngine.markRolledBack(contextDir, tx.txHash);
-
-            // 6.5. Limpa o manifesto temporário de rollback
-            if (fs.existsSync(rollbackManifestPath)) {
-                try { fs.unlinkSync(rollbackManifestPath); } catch {}
-            }
         }
+
+        // 8. Atualiza o ledger removendo todas as transações revertidas
+        let ledger: HistoryLedger = { version: '1.0', applied_updates: [] };
+        if (fs.existsSync(historyFile)) {
+            try {
+                ledger = JSON.parse(fs.readFileSync(historyFile, 'utf-8'));
+            } catch {}
+        }
+        const revertSet = new Set(targetTxHashes);
+        ledger.applied_updates = (ledger.applied_updates || []).filter(u => !revertSet.has(u.hash));
+        safeAtomicWriteFileSync(historyFile, JSON.stringify(ledger, null, 2), 'utf-8');
+
+        // 9. Comita a transação de Rollback
+        TransactionEngine.markCommitted(contextDir, rollbackTxHash);
 
         console.log(pc.green(`\n✔ Rollback executed successfully! ${rollbackQueue.length} transaction${rollbackQueue.length > 1 ? 's' : ''} reverted.`));
         console.log(pc.dim('📋 Ledger updated in .ai-context/.pactx/ledger.json\n'));

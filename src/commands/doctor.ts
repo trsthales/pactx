@@ -6,6 +6,7 @@ import { findContextDir } from '../utils/contextFinder';
 import { ensureStorageLayout } from '../update/migration';
 import { TransactionEngine } from '../update/transaction';
 import { RequirementItem, HistoryLedger, TransactionManifest } from '../update/types';
+import { isProcessAlive } from '../update/lock';
 
 export interface DiagnosticResult {
     id: number;
@@ -331,10 +332,20 @@ export function runDiagnostics(cwd: string = process.cwd(), fix: boolean = false
                     txErrors.push(`Transaction ${manifest.txHash || file} is in unfinished state (${manifest.status}).`);
                 } else if (manifest.status === 'FAILED') {
                     txErrors.push(`Transaction ${manifest.txHash || file} failed auto-recovery.`);
+                } else if (manifest.status === 'RECOVERY_REQUIRED') {
+                    txErrors.push(`Transaction ${manifest.txHash || file} requires recovery intervention (Conflict/Modification detected).`);
                 }
             } catch (err: any) {
                 txErrors.push(`Corrupted transaction manifest ${file}: ${err.message}`);
             }
+        }
+    }
+
+    const quarantineDir = path.join(contextDir, '.pactx', 'quarantine');
+    if (fs.existsSync(quarantineDir)) {
+        const quarantinedFiles = fs.readdirSync(quarantineDir);
+        for (const qf of quarantinedFiles) {
+            txErrors.push(`Quarantined transaction manifest: .pactx/quarantine/${qf}`);
         }
     }
 
@@ -375,13 +386,9 @@ export function runDiagnostics(cwd: string = process.cwd(), fix: boolean = false
             }
 
             if (lockPid && typeof lockPid === 'number') {
-                try {
-                    process.kill(lockPid, 0);
-                } catch (killErr: any) {
-                    if (killErr.code === 'ESRCH') {
-                        isStaleLock = true;
-                        lockErrors.push(`Abandoned lock file detected (PID ${lockPid} does not exist): ${lockFile}`);
-                    }
+                if (!isProcessAlive(lockPid)) {
+                    isStaleLock = true;
+                    lockErrors.push(`Abandoned lock file detected (PID ${lockPid} does not exist): ${lockFile}`);
                 }
             }
 
@@ -444,15 +451,33 @@ export function runDiagnostics(cwd: string = process.cwd(), fix: boolean = false
         details: deprecatedReqWarnings.length > 0 ? deprecatedReqWarnings : undefined,
     });
 
-    // Clean orphan .tmp files if fix is enabled
+    // Clean orphan .tmp files if fix is enabled with living PID & 5m age check (P1-05 & P1-06)
     if (fix) {
         function cleanTempFiles(dir: string) {
             if (!fs.existsSync(dir)) return;
             const entries = fs.readdirSync(dir, { withFileTypes: true });
+            const now = Date.now();
+            const FIVE_MINUTES_MS = 5 * 60 * 1000;
             for (const e of entries) {
                 const full = path.join(dir, e.name);
                 if (e.isFile() && e.name.endsWith('.tmp')) {
-                    try { fs.unlinkSync(full); } catch {}
+                    const match = e.name.match(/^\.(.+)\.(\d+)\.(\d+)\.([a-z0-9]+)\.tmp$/i);
+                    let shouldDelete = false;
+                    try {
+                        const stat = fs.statSync(full);
+                        const fileAge = now - stat.mtimeMs;
+                        if (match) {
+                            const pid = parseInt(match[2], 10);
+                            if (!isProcessAlive(pid) && fileAge > FIVE_MINUTES_MS) {
+                                shouldDelete = true;
+                            }
+                        } else if (fileAge > FIVE_MINUTES_MS) {
+                            shouldDelete = true;
+                        }
+                    } catch {}
+                    if (shouldDelete) {
+                        try { fs.unlinkSync(full); } catch {}
+                    }
                 } else if (e.isDirectory() && !e.isSymbolicLink()) {
                     cleanTempFiles(full);
                 }

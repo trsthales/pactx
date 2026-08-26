@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HistoryLedger, HistoryEntry } from './types';
 import { safeAtomicWriteFileSync } from './applier';
-import { ContextLock } from './lock';
+import { ContextLock, isProcessAlive } from './lock';
 
 const MAX_HISTORY_ENTRIES = 500;
 
@@ -104,11 +104,22 @@ export function ensureStorageLayout(contextDir: string, lockHeld: boolean = fals
         }
     }
 
-        // Limpeza de lock legado na raiz de .ai-context/
+        // Limpeza de lock legado na raiz de .ai-context/ com checagem de liveness de PID (P1-07)
         if (fs.existsSync(legacyLockPath)) {
             try {
+                const raw = fs.readFileSync(legacyLockPath, 'utf-8');
+                let lockPid: number | undefined;
+                try {
+                    const parsed = JSON.parse(raw);
+                    lockPid = parsed.pid;
+                } catch {}
                 const stat = fs.statSync(legacyLockPath);
-                if (Date.now() - stat.mtimeMs > 30000) {
+                const isOld = Date.now() - stat.mtimeMs > 30000;
+                if (lockPid && typeof lockPid === 'number') {
+                    if (!isProcessAlive(lockPid)) {
+                        fs.unlinkSync(legacyLockPath);
+                    }
+                } else if (isOld) {
                     fs.unlinkSync(legacyLockPath);
                 }
             } catch {
