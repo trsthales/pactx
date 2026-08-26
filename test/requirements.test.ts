@@ -172,8 +172,8 @@ new_decisions:
     }
 });
 
-test('Requirements: Warning no plano quando satisfies aponta para requisito inexistente', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-req-warning-'));
+test('Requirements P1-12: Fail-Closed no planner quando satisfies aponta para requisito inexistente', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-req-failclosed-'));
     try {
         initProject(tmpDir);
 
@@ -183,16 +183,76 @@ version: "1.1"
 new_decisions:
   - id: "auto"
     title: "Decision with Orphan Satisfies"
-    reason: "Teste de Warning"
+    reason: "Teste de Fail-Closed"
     decision: "Decisão tomada"
     satisfies: ["REQ-999"]
 \`\`\`
 `;
         const { payload, canonicalHash } = parseAndValidateUpdate(payloadText);
+        assert.throws(() => {
+            buildMutationPlan(tmpDir, payload, canonicalHash);
+        }, /Validation Error: Requirement "REQ-999" referenced in 'satisfies' does not exist in repository or current batch\./);
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('Requirements P1-11: Sincronização bidirecional estrita no supersede de ADRs', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-req-supersede-sync-'));
+    try {
+        initProject(tmpDir); // Cria REQ-001 e DEC-001 (DEC-001 satisfies REQ-001)
+        const contextDir = path.join(tmpDir, '.ai-context');
+        const reqPath = path.join(contextDir, 'requirements.md');
+        const dec1Path = path.join(contextDir, 'decisions', 'DEC-001.md');
+
+        // Cria nova decisão DEC-002 que substitui DEC-001
+        const payloadText = `
+\`\`\`pactx-update
+version: "1.1"
+new_decisions:
+  - id: "auto"
+    title: "Updated Storage Architecture"
+    reason: "Substituir DEC-001 com modelo otimizado"
+    decision: "Nova arquitetura com cache"
+superseded_decisions:
+  - id: "DEC-001"
+    by: "auto"
+    reason: "Substituída pela nova arquitetura"
+\`\`\`
+`;
+        const { payload, canonicalHash } = parseAndValidateUpdate(payloadText);
         const plan = buildMutationPlan(tmpDir, payload, canonicalHash);
 
-        const hasWarning = plan.warnings.some(w => w.includes('REQ-999') && w.includes('not found in requirements.md'));
-        assert.strictEqual(hasWarning, true, 'Deve gerar warning para REQ inexistente');
+        // O planner deve ter identificado que DEC-001 satisfazia REQ-001 e planejado a migração
+        assert.strictEqual(plan.operations.createdAdrs[0].id, 'DEC-002');
+        assert.deepStrictEqual(plan.operations.createdAdrs[0].satisfies, ['REQ-001']);
+
+        const reqOp = plan.operations.updatedRequirements.find(u => u.id === 'REQ-001');
+        assert.ok(reqOp, 'REQ-001 deve constar em updatedRequirements');
+        assert.deepStrictEqual(reqOp.satisfiedByRemove, ['DEC-001']);
+        assert.deepStrictEqual(reqOp.satisfiedByAdd, ['DEC-002']);
+
+        applyMutationPlan(tmpDir, plan);
+
+        // Valida que requirements.md foi atualizado: DEC-001 removido e DEC-002 adicionado
+        const reqRaw = fs.readFileSync(reqPath, 'utf-8');
+        const reqFm = yaml.parse(reqRaw.match(/^---\r?\n([\s\S]*?)\r?\n---/)![1]);
+        const req1 = reqFm.requirements.find((r: any) => r.id === 'REQ-001');
+        assert.ok(req1);
+        assert.deepStrictEqual(req1.satisfied_by, ['DEC-002']);
+
+        // Valida DEC-002 criado com satisfies: ["REQ-001"]
+        const dec2Path = path.join(contextDir, 'decisions', 'DEC-002.md');
+        const dec2Raw = fs.readFileSync(dec2Path, 'utf-8');
+        const dec2Fm = yaml.parse(dec2Raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)![1]);
+        assert.deepStrictEqual(dec2Fm.satisfies, ['REQ-001']);
+
+        // Valida DEC-001 marcado como superseded
+        const dec1Raw = fs.readFileSync(dec1Path, 'utf-8');
+        const dec1Fm = yaml.parse(dec1Raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)![1]);
+        assert.strictEqual(dec1Fm.status, 'superseded');
+        assert.strictEqual(dec1Fm.superseded_by, 'DEC-002');
 
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

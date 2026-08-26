@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import yaml from 'yaml';
 import { RawUpdatePayload, MutationPlan, HistoryLedger } from './types';
 import { getCurrentContextRevision } from '../composer';
 import { ensureStorageLayout } from './migration';
@@ -236,18 +237,24 @@ export function buildMutationPlan(
             const targetPath = path.resolve(decisionsDir, `${adrId}.md`);
             assertInsideDirectory(decisionsDir, targetPath, `ADR ${adrId}`);
 
-            const satisfiesList = d.satisfies && Array.isArray(d.satisfies) ? d.satisfies : [];
-            for (const satId of satisfiesList) {
-                if (!existingReqIds.has(satId) && !allocatedReqIds.has(satId)) {
-                    warnings.push(`Requirement mapping warning: Decision "${adrId}" declares satisfies: ["${satId}"], but "${satId}" was not found in requirements.md or current batch.`);
+            const rawSatisfiesList = d.satisfies && Array.isArray(d.satisfies) ? d.satisfies : [];
+            const satisfiesList: string[] = [];
+            for (const satId of rawSatisfiesList) {
+                const canonicalSatId = String(satId).trim().toUpperCase();
+                // [P1-12] Fail-Closed em requisitos inexistentes
+                if (!existingReqIds.has(canonicalSatId) && !allocatedReqIds.has(canonicalSatId)) {
+                    throw new Error(
+                        `Validation Error: Requirement "${canonicalSatId}" referenced in 'satisfies' does not exist in repository or current batch.`
+                    );
                 }
-                const existingOp = plan.operations.updatedRequirements.find(u => u.id === satId);
+                satisfiesList.push(canonicalSatId);
+                const existingOp = plan.operations.updatedRequirements.find(u => u.id === canonicalSatId);
                 if (existingOp) {
                     if (!existingOp.satisfiedByAdd) existingOp.satisfiedByAdd = [];
                     if (!existingOp.satisfiedByAdd.includes(adrId)) existingOp.satisfiedByAdd.push(adrId);
                 } else {
                     plan.operations.updatedRequirements.push({
-                        id: satId,
+                        id: canonicalSatId,
                         satisfiedByAdd: [adrId],
                     });
                 }
@@ -290,6 +297,72 @@ export function buildMutationPlan(
                     throw new Error(`Ambiguity in superseded_decisions: 'by: auto' cannot be resolved because ${plan.operations.createdAdrs.length} new ADRs were created in this batch. Specify the ID explicitly.`);
                 } else {
                     throw new Error(`superseded_decisions specified 'by: auto', but no new ADR was created in this batch.`);
+                }
+            }
+
+            // [P1-11] Inspeciona quais requisitos o ADR substituído satisfazia para atualizar requirements.md
+            let targetSatisfies: string[] = [];
+            try {
+                const targetContent = fs.readFileSync(targetPath, 'utf-8');
+                const fmMatch = targetContent.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+                if (fmMatch) {
+                    const parsedFm = yaml.parse(fmMatch[1]);
+                    if (parsedFm && Array.isArray(parsedFm.satisfies)) {
+                        targetSatisfies = parsedFm.satisfies.map((id: any) => String(id).trim().toUpperCase());
+                    }
+                }
+            } catch {}
+
+            // Também verifica se requirements.md lista s.id em satisfied_by
+            if (fs.existsSync(requirementsPath)) {
+                try {
+                    const reqContent = fs.readFileSync(requirementsPath, 'utf-8');
+                    const fmMatch = reqContent.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+                    if (fmMatch) {
+                        const parsedFm = yaml.parse(fmMatch[1]);
+                        if (parsedFm && Array.isArray(parsedFm.requirements)) {
+                            for (const r of parsedFm.requirements) {
+                                if (r && Array.isArray(r.satisfied_by)) {
+                                    if (r.satisfied_by.some((d: any) => String(d).trim().toUpperCase() === s.id.toUpperCase())) {
+                                        const rId = String(r.id).trim().toUpperCase();
+                                        if (!targetSatisfies.includes(rId)) {
+                                            targetSatisfies.push(rId);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+            }
+
+            // Sincronização bidirecional estrita no supersede de ADRs (P1-11)
+            for (const reqId of targetSatisfies) {
+                const existingOp = plan.operations.updatedRequirements.find(u => u.id === reqId);
+                if (existingOp) {
+                    if (!existingOp.satisfiedByRemove) existingOp.satisfiedByRemove = [];
+                    if (!existingOp.satisfiedByRemove.includes(s.id.toUpperCase())) {
+                        existingOp.satisfiedByRemove.push(s.id.toUpperCase());
+                    }
+                    if (!existingOp.satisfiedByAdd) existingOp.satisfiedByAdd = [];
+                    if (supersededBy && !existingOp.satisfiedByAdd.includes(supersededBy)) {
+                        existingOp.satisfiedByAdd.push(supersededBy);
+                    }
+                } else {
+                    plan.operations.updatedRequirements.push({
+                        id: reqId,
+                        satisfiedByRemove: [s.id.toUpperCase()],
+                        satisfiedByAdd: supersededBy ? [supersededBy] : [],
+                    });
+                }
+
+                // Se o superseding ADR foi criado neste lote, garante que ele herda o vínculo satisfies
+                const newAdr = plan.operations.createdAdrs.find(a => a.id === supersededBy);
+                if (newAdr) {
+                    if (!newAdr.satisfies) newAdr.satisfies = [];
+                    if (!newAdr.satisfies.includes(reqId)) {
+                        newAdr.satisfies.push(reqId);
+                    }
                 }
             }
 

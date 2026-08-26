@@ -98,6 +98,18 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
     const lock = new ContextLock(contextDir);
     lock.acquire();
 
+    // Revalidação Obrigatória de Concorrência Otimista (Final OCC Check) sob Lock
+    const currentRev = getCurrentContextRevision(contextDir);
+    if (plan.baseRevision && plan.baseRevision !== currentRev) {
+        if (!plan.isForced) {
+            lock.release();
+            throw new Error(
+                `Conflict: Stale context detected under lock. Repository revision changed from "${plan.baseRevision}" to "${currentRev}". Use --force to override.`
+            );
+        }
+    }
+    plan.appliedRevision = currentRev;
+
     // Snapshot em Memória para Rollback Transacional
     const snapshot = new Map<string, string | null>(); // path -> content (null se arquivo não existia)
     const createdFiles: string[] = [];
@@ -185,6 +197,14 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             for (const s of plan.operations.supersededAdrs) {
                 if (idMapping.has(s.supersededBy)) {
                     s.supersededBy = idMapping.get(s.supersededBy)!;
+                }
+            }
+            for (const upd of plan.operations.updatedRequirements) {
+                if (upd.satisfiedByAdd) {
+                    upd.satisfiedByAdd = upd.satisfiedByAdd.map(id => idMapping.get(id) || id);
+                }
+                if (upd.satisfiedByRemove) {
+                    upd.satisfiedByRemove = upd.satisfiedByRemove.map(id => idMapping.get(id) || id);
                 }
             }
         }
@@ -318,6 +338,12 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             for (const upd of plan.operations.updatedRequirements || []) {
                 const existingReq = existingReqs.find(r => r.id.toUpperCase() === upd.id.toUpperCase());
                 if (existingReq) {
+                    if (upd.satisfiedByRemove && upd.satisfiedByRemove.length > 0) {
+                        if (existingReq.satisfied_by) {
+                            const removeSet = new Set(upd.satisfiedByRemove.map(id => id.toUpperCase()));
+                            existingReq.satisfied_by = existingReq.satisfied_by.filter(id => !removeSet.has(id.toUpperCase()));
+                        }
+                    }
                     if (upd.satisfiedByAdd && upd.satisfiedByAdd.length > 0) {
                         if (!existingReq.satisfied_by) existingReq.satisfied_by = [];
                         for (const adrId of upd.satisfiedByAdd) {

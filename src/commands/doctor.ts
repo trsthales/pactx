@@ -211,6 +211,8 @@ export function runDiagnostics(cwd: string = process.cwd(), fix: boolean = false
         const files = fs.readdirSync(decisionsDir).filter(f => f.endsWith('.md'));
         for (const file of files) {
             const { data } = parseFrontmatter(fs.readFileSync(path.join(decisionsDir, file), 'utf-8'));
+            const status = (data.status || 'active').toLowerCase();
+            if (status === 'superseded') continue;
             if (Array.isArray(data.satisfies)) {
                 for (const satId of data.satisfies) {
                     if (!existingReqMap.has(String(satId).toUpperCase())) {
@@ -239,6 +241,8 @@ export function runDiagnostics(cwd: string = process.cwd(), fix: boolean = false
         const files = fs.readdirSync(decisionsDir).filter(f => f.endsWith('.md'));
         for (const file of files) {
             const { data } = parseFrontmatter(fs.readFileSync(path.join(decisionsDir, file), 'utf-8'));
+            const status = (data.status || 'active').toLowerCase();
+            if (status === 'superseded') continue;
             const adrId = (data.id || file.replace('.md', '')).toUpperCase();
             if (Array.isArray(data.satisfies)) {
                 for (const satId of data.satisfies) {
@@ -357,17 +361,45 @@ export function runDiagnostics(cwd: string = process.cwd(), fix: boolean = false
 
     if (fs.existsSync(lockFile)) {
         try {
-            const stats = fs.statSync(lockFile);
-            if (Date.now() - stats.mtimeMs > 30000) {
+            const raw = fs.readFileSync(lockFile, 'utf-8');
+            let lockPid: number | undefined;
+            let heartbeatAt: number | undefined;
+
+            try {
+                const data = JSON.parse(raw);
+                lockPid = data.pid;
+                heartbeatAt = data.heartbeatAt || data.time;
+            } catch {
                 isStaleLock = true;
-                lockErrors.push(`Abandoned lock file detected (>30s old): ${lockFile}`);
-                if (fix) {
-                    try {
-                        fs.unlinkSync(lockFile);
-                        fixesApplied.push('Removed abandoned stale lock file.');
-                        lockErrors.pop();
-                    } catch {}
+                lockErrors.push(`Corrupted lock file detected: ${lockFile}`);
+            }
+
+            if (lockPid && typeof lockPid === 'number') {
+                try {
+                    process.kill(lockPid, 0);
+                } catch (killErr: any) {
+                    if (killErr.code === 'ESRCH') {
+                        isStaleLock = true;
+                        lockErrors.push(`Abandoned lock file detected (PID ${lockPid} does not exist): ${lockFile}`);
+                    }
                 }
+            }
+
+            if (!isStaleLock) {
+                const stats = fs.statSync(lockFile);
+                const lastActivity = heartbeatAt || stats.mtimeMs;
+                if (Date.now() - lastActivity > 30000) {
+                    isStaleLock = true;
+                    lockErrors.push(`Abandoned lock file detected (>30s old): ${lockFile}`);
+                }
+            }
+
+            if (isStaleLock && fix) {
+                try {
+                    fs.unlinkSync(lockFile);
+                    fixesApplied.push('Removed abandoned stale lock file.');
+                    lockErrors.pop();
+                } catch {}
             }
         } catch {}
     }

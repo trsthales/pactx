@@ -10,6 +10,7 @@ import { buildMutationPlan } from '../src/update/planner';
 import { applyMutationPlan } from '../src/update/applier';
 import { TransactionEngine } from '../src/update/transaction';
 import { TransactionManifest } from '../src/update/types';
+import { ContextLock } from '../src/update/lock';
 
 test('WAL Lifecycle: Persiste manifesto TX em PREPARED -> APPLYING -> COMMITTED com checksums', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-wal-lifecycle-'));
@@ -250,6 +251,171 @@ test('Poda de Transações: Mantém os 50 manifestos mais recentes e remove tran
 
         // A transação 60 (mais recente) deve existir
         assert.strictEqual(fs.existsSync(path.join(transactionsDir, 'TX-hash_060.json')), true);
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('ContextLock: Recuperação imediata de lock órfão de processo morto (Dead PID via process.kill)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-lock-dead-pid-'));
+    try {
+        initProject(tmpDir);
+        const contextDir = path.join(tmpDir, '.ai-context');
+        const lockPath = path.join(contextDir, '.pactx', '.pactx.lock');
+        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+
+        // Cria lock pertencente a um PID inexistente (ex: 9999999)
+        const deadLockData = {
+            pid: 9999999,
+            token: 'dead-pid-token',
+            createdAt: Date.now(),
+            heartbeatAt: Date.now(), // Heartbeat recente, mas processo está morto!
+        };
+        fs.writeFileSync(lockPath, JSON.stringify(deadLockData), 'utf-8');
+
+        const lock = new ContextLock(contextDir);
+        // Deve adquirir imediatamente sem esperar 30s pois o PID está morto
+        const start = Date.now();
+        lock.acquire(3000);
+        const elapsed = Date.now() - start;
+
+        assert.ok(elapsed < 1000, `Deveria recuperar o lock rapidamente (demorou ${elapsed}ms)`);
+        assert.strictEqual(fs.existsSync(lockPath), true);
+
+        // Valida que o lockfile agora contém os dados do processo atual
+        const currentLockData = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+        assert.strictEqual(currentLockData.pid, process.pid);
+        assert.strictEqual(currentLockData.token, lock.getToken());
+
+        lock.release();
+        assert.strictEqual(fs.existsSync(lockPath), false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('ContextLock: Liberação protegida por token impede roubo/exclusão de lock alheio', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-lock-token-'));
+    try {
+        initProject(tmpDir);
+        const contextDir = path.join(tmpDir, '.ai-context');
+        const lockPath = path.join(contextDir, '.pactx', '.pactx.lock');
+
+        const lock1 = new ContextLock(contextDir);
+        lock1.acquire(1000);
+
+        // Simula que outro processo sobrescreveu o lockfile com seu próprio token
+        const foreignLockData = {
+            pid: 8888888,
+            token: 'foreign-owner-token',
+            createdAt: Date.now(),
+            heartbeatAt: Date.now(),
+        };
+        fs.writeFileSync(lockPath, JSON.stringify(foreignLockData), 'utf-8');
+
+        // lock1 tenta liberar seu lock anterior
+        lock1.release();
+
+        // O lockfile NÃO deve ter sido deletado por lock1 porque o token era diferente!
+        assert.strictEqual(fs.existsSync(lockPath), true, 'Lockfile com token alheio deve ser preservado');
+        const content = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+        assert.strictEqual(content.token, 'foreign-owner-token');
+
+        fs.unlinkSync(lockPath);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('Sincronização WAL ↔ Ledger: Auto-recovery remove entradas órfãs do ledger.json', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-wal-ledger-sync-'));
+    try {
+        initProject(tmpDir);
+        const contextDir = path.join(tmpDir, '.ai-context');
+        const transactionsDir = path.join(contextDir, '.pactx', 'transactions');
+        const historyFile = path.join(contextDir, '.pactx', 'ledger.json');
+        fs.mkdirSync(transactionsDir, { recursive: true });
+
+        const txHash = 'aborted_tx_with_ledger_entry';
+
+        // Cria ledger contendo a transação abortada
+        const ledger = {
+            version: '1.0',
+            applied_updates: [
+                { hash: 'legitimate_tx_1', applied_at: new Date().toISOString(), task: 'Task 1' },
+                { hash: txHash, applied_at: new Date().toISOString(), task: 'Aborted Task' },
+            ],
+        };
+        fs.writeFileSync(historyFile, JSON.stringify(ledger, null, 2), 'utf-8');
+
+        // Cria manifesto APPLYING para a transação abortada
+        const manifest: TransactionManifest = {
+            txHash,
+            status: 'APPLYING',
+            recoveryAttempts: 0,
+            createdAt: new Date().toISOString(),
+            baseRevision: 'rev1',
+            snapshot: [],
+            createdFiles: [],
+            plan: {} as any,
+        };
+        fs.writeFileSync(path.join(transactionsDir, `TX-${txHash}.json`), JSON.stringify(manifest, null, 2), 'utf-8');
+
+        // Executa auto-recovery
+        const result = TransactionEngine.runAutoRecovery(contextDir);
+        assert.deepStrictEqual(result.recovered, [txHash]);
+
+        // Valida que a entrada abortada foi removida do ledger.json
+        const updatedLedger = JSON.parse(fs.readFileSync(historyFile, 'utf-8'));
+        assert.strictEqual(updatedLedger.applied_updates.length, 1);
+        assert.strictEqual(updatedLedger.applied_updates[0].hash, 'legitimate_tx_1');
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('Segurança: Snapshot com caminhos relativos e validação de Jail', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-rel-jail-'));
+    try {
+        initProject(tmpDir);
+        const contextDir = path.join(tmpDir, '.ai-context');
+        const transactionsDir = path.join(contextDir, '.pactx', 'transactions');
+        fs.mkdirSync(transactionsDir, { recursive: true });
+
+        // Validação de jail no helper resolveAndValidateJail
+        assert.throws(() => {
+            TransactionEngine.resolveAndValidateJail(contextDir, '../../etc/passwd');
+        }, /Security violation/);
+
+        // Cria manifesto com caminho que tenta escapar jail
+        const txHash = 'jail_escape_tx';
+        const manifest: TransactionManifest = {
+            txHash,
+            status: 'APPLYING',
+            recoveryAttempts: 0,
+            createdAt: new Date().toISOString(),
+            baseRevision: 'rev1',
+            snapshot: [
+                {
+                    path: '../../etc/passwd',
+                    relativePath: '../../etc/passwd',
+                    contentHash: 'somehash',
+                    content: 'root:x:0:0:',
+                }
+            ],
+            createdFiles: [],
+            plan: {} as any,
+        };
+        fs.writeFileSync(path.join(transactionsDir, `TX-${txHash}.json`), JSON.stringify(manifest, null, 2), 'utf-8');
+
+        // Recovery deve falhar na tentativa de jail escape e registrar erro sem quebrar
+        TransactionEngine.runAutoRecovery(contextDir);
+        const updatedManifest = JSON.parse(fs.readFileSync(path.join(transactionsDir, `TX-${txHash}.json`), 'utf-8'));
+        assert.strictEqual(updatedManifest.recoveryAttempts, 1);
+        // Permanece em APPLYING até atingir 3 tentativas e transicionar para FAILED
+        assert.strictEqual(updatedManifest.status, 'APPLYING');
 
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

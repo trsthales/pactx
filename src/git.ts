@@ -45,3 +45,16 @@ export function getGitState(cwd: string = process.cwd()): GitState {
         modifiedFiles,
     };
 }
+
+export function getGitRoot(cwd: string = process.cwd()): string | null {
+    try {
+        const root = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+            cwd,
+            encoding: 'utf-8',
+            stdio: ['ignore', 'pipe', 'ignore']
+        }).trim();
+        return root || null;
+    } catch {
+        return null;
+    }
+}

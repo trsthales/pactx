@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'yaml';
 import pc from 'picocolors';
-import { findContextDir, findProjectRoot } from '../utils/contextFinder';
+import { bootstrapPactx } from '../core/bootstrap';
 import { getGitState } from '../git';
 import { getCurrentContextRevision } from '../composer';
 import { HistoryLedger } from '../update/types';
@@ -70,8 +70,7 @@ function parseFrontmatter<T = any>(content: string): { data: T; body: string } {
 }
 
 export function getStatusData(cwd: string = process.cwd()): StatusData {
-    const contextDir = findContextDir(cwd);
-    const projectRoot = findProjectRoot(cwd);
+    const { contextDir, projectRoot } = bootstrapPactx(cwd, { autoRecovery: false });
 
     // 1. project.md
     let projectName = path.basename(projectRoot);

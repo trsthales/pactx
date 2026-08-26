@@ -228,3 +228,36 @@ new_decisions:
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+test('P2-06 Containment: findContextDir não sobe além da raiz do repositório Git', () => {
+    const parentTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-parent-'));
+    try {
+        // Inicializa .ai-context no diretório pai (ex: /home/user/.ai-context)
+        initProject(parentTmpDir);
+        assert.strictEqual(fs.existsSync(path.join(parentTmpDir, '.ai-context')), true);
+
+        // Cria um subdiretório que é um repositório Git independente
+        const childGitRepo = path.join(parentTmpDir, 'isolated-git-project');
+        fs.mkdirSync(childGitRepo, { recursive: true });
+
+        // Simula repositório git inicializado com git init via child_process
+        const { execFileSync } = require('node:child_process');
+        try {
+            execFileSync('git', ['init'], { cwd: childGitRepo, stdio: 'ignore' });
+        } catch {
+            // Se git CLI não estiver disponível, cria pasta .git
+            fs.mkdirSync(path.join(childGitRepo, '.git'), { recursive: true });
+        }
+
+        const nestedSubDir = path.join(childGitRepo, 'src', 'nested');
+        fs.mkdirSync(nestedSubDir, { recursive: true });
+
+        // A busca a partir de nestedSubDir deve parar em childGitRepo e NÃO capturar parentTmpDir/.ai-context
+        assert.throws(() => {
+            findContextDir(nestedSubDir);
+        }, /\.ai-context folder not found in this repository\. Run 'pactx init' to initialize\./);
+
+    } finally {
+        fs.rmSync(parentTmpDir, { recursive: true, force: true });
+    }
+});

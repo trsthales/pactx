@@ -10,7 +10,7 @@ import { parseAndValidateUpdate } from './update/parser';
 import { buildMutationPlan } from './update/planner';
 import { applyMutationPlan } from './update/applier';
 import { TransactionEngine } from './update/transaction';
-import { findContextDir, findProjectRoot } from './utils/contextFinder';
+import { bootstrapPactx } from './core/bootstrap';
 import { renderStatus } from './commands/status';
 import { renderDiff } from './commands/diff';
 import { executeRollback } from './commands/rollback';
@@ -37,9 +37,7 @@ program
     .option('--stdout', 'Print to terminal only without copying to clipboard')
     .action(async (options) => {
         try {
-            const contextDir = findContextDir(process.cwd());
-            TransactionEngine.runAutoRecovery(contextDir);
-            const projectRoot = findProjectRoot(process.cwd());
+            const { projectRoot } = bootstrapPactx(process.cwd());
             const output = composeContext(projectRoot, { short: options.short });
             const bytes = Buffer.byteLength(output, 'utf8');
             const estimatedTokens = Math.round(bytes / 3.8);
@@ -95,9 +93,7 @@ program
                 }
             }
 
-            const contextDir = findContextDir(process.cwd());
-            TransactionEngine.runAutoRecovery(contextDir);
-            const projectRoot = findProjectRoot(process.cwd());
+            const { projectRoot } = bootstrapPactx(process.cwd());
             const { payload, canonicalHash, warnings } = parseAndValidateUpdate(rawInput);
             const plan = buildMutationPlan(projectRoot, payload, canonicalHash, warnings);
 

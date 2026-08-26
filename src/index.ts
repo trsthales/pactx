@@ -2,6 +2,7 @@ export * from './composer';
 export * from './git';
 export * from './init';
 export * from './update';
+export * from './core/bootstrap';
 export * from './utils/contextFinder';
 export * from './commands/status';
 export * from './commands/diff';

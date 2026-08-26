@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import pc from 'picocolors';
-import { findContextDir, findProjectRoot } from '../utils/contextFinder';
+import { bootstrapPactx } from '../core/bootstrap';
 import { ContextLock } from '../update/lock';
 import { TransactionEngine } from '../update/transaction';
 import { TransactionManifest, HistoryLedger } from '../update/types';
@@ -19,8 +19,7 @@ export async function executeRollback(
     targetHashArg?: string,
     options: RollbackOptions = {}
 ): Promise<void> {
-    const contextDir = findContextDir(cwd);
-    const projectRoot = findProjectRoot(cwd);
+    const { contextDir, projectRoot } = bootstrapPactx(cwd);
     const transactionsDir = TransactionEngine.getTransactionsDir(contextDir);
     const historyFile = path.join(contextDir, '.pactx', 'ledger.json');
 
@@ -173,22 +172,24 @@ export async function executeRollback(
                 startedAt: new Date().toISOString(),
             }, null, 2), 'utf-8');
 
-            // 6.1. Restauração dos arquivos a partir do snapshot
+            // 6.1. Restauração dos arquivos a partir do snapshot com validação de Jail
             for (const item of tx.snapshot) {
+                const destPath = TransactionEngine.resolveAndValidateJail(contextDir, item.relativePath || item.path);
                 if (item.content === null) {
-                    if (fs.existsSync(item.path)) {
-                        try { fs.unlinkSync(item.path); } catch {}
+                    if (fs.existsSync(destPath)) {
+                        try { fs.unlinkSync(destPath); } catch {}
                     }
                 } else {
-                    safeAtomicWriteFileSync(item.path, item.content, 'utf-8');
+                    safeAtomicWriteFileSync(destPath, item.content, 'utf-8');
                 }
             }
 
-            // 6.2. Deleção física de arquivos criados
+            // 6.2. Deleção física de arquivos criados com validação de Jail
             if (Array.isArray(tx.createdFiles)) {
                 for (const createdPath of tx.createdFiles) {
-                    if (fs.existsSync(createdPath)) {
-                        try { fs.unlinkSync(createdPath); } catch {}
+                    const destPath = TransactionEngine.resolveAndValidateJail(contextDir, createdPath);
+                    if (fs.existsSync(destPath)) {
+                        try { fs.unlinkSync(destPath); } catch {}
                     }
                 }
             }
