@@ -3,7 +3,7 @@ import clipboardy from 'clipboardy';
 import pc from 'picocolors';
 import { parseAndValidateUpdate } from '../update/parser';
 import { buildMutationPlan } from '../update/planner';
-import { findProjectRoot } from '../utils/contextFinder';
+import { bootstrapPactx } from '../core/bootstrap';
 
 export interface DiffOptions {
     file?: string;
@@ -31,7 +31,7 @@ export async function renderDiff(cwd: string = process.cwd(), options: DiffOptio
         }
     }
 
-    const projectRoot = findProjectRoot(cwd);
+    const { projectRoot } = bootstrapPactx(cwd, { autoRecovery: false });
     const { payload, canonicalHash, warnings } = parseAndValidateUpdate(rawInput);
     const plan = buildMutationPlan(projectRoot, payload, canonicalHash, warnings);
 

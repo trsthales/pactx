@@ -48,11 +48,11 @@ test('Status: Detecta lock ativo e PID do processo concorrente', () => {
         initProject(tmpDir);
         const lockPath = path.join(tmpDir, '.ai-context', '.pactx', '.pactx.lock');
         fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-        fs.writeFileSync(lockPath, JSON.stringify({ pid: 98765, time: Date.now() }), 'utf-8');
+        fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: 'test-token', createdAt: Date.now(), heartbeatAt: Date.now() }), 'utf-8');
 
         const data = getStatusData(tmpDir);
         assert.strictEqual(data.lock.isLocked, true);
-        assert.strictEqual(data.lock.pid, 98765);
+        assert.strictEqual(data.lock.pid, process.pid);
 
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -1314,3 +1314,71 @@ Motivo Concorrente B
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+test('Final OCC Check: Revalidação obrigatória sob ContextLock aborta mutação concorrente desatualizada', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-final-occ-'));
+    try {
+        initProject(tmpDir);
+        const contextDir = path.join(tmpDir, '.ai-context');
+        const rev1 = getCurrentContextRevision(contextDir);
+
+        // Prepara um plano baseado em rev1
+        const payload = `
+\`\`\`pactx-update
+version: "1.0"
+base_revision: "${rev1}"
+state:
+  active_task: "Task Concorrente"
+\`\`\`
+`;
+        const { payload: parsed, canonicalHash } = parseAndValidateUpdate(payload);
+        const plan = buildMutationPlan(tmpDir, parsed, canonicalHash);
+        assert.strictEqual(plan.baseRevision, rev1);
+
+        // Simula uma mutação intermediária feita por outro processo que altera a revisão
+        fs.appendFileSync(path.join(contextDir, 'glossary.md'), '\n- **TermoIntermediario**: Definição\n', 'utf-8');
+        const rev2 = getCurrentContextRevision(contextDir);
+        assert.notStrictEqual(rev1, rev2);
+
+        // A tentativa de aplicar plan (baseado em rev1) deve ser bloqueada sob lock pelo Final OCC Check
+        assert.throws(() => {
+            applyMutationPlan(tmpDir, plan);
+        }, /Conflict: Stale context detected under lock/);
+
+        // Com isForced: true, a aplicação deve ser permitida
+        plan.isForced = true;
+        assert.doesNotThrow(() => {
+            applyMutationPlan(tmpDir, plan);
+        });
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('Centralized Bootstrap: bootstrapPactx executa discovery, layout migration e auto-recovery', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-bootstrap-'));
+    try {
+        initProject(tmpDir);
+        const subDir = path.join(tmpDir, 'src', 'nested', 'module');
+        fs.mkdirSync(subDir, { recursive: true });
+
+        // Simula layout legado (.pactx-history.json)
+        const legacyHistoryPath = path.join(tmpDir, '.ai-context', '.pactx-history.json');
+        fs.writeFileSync(legacyHistoryPath, JSON.stringify({ version: '1.0', applied_updates: [{ hash: 'leg_hash', applied_at: new Date().toISOString() }] }), 'utf-8');
+
+        // Executa bootstrap a partir de um subdiretório
+        const { bootstrapPactx } = require('../src/core/bootstrap');
+        const result = bootstrapPactx(subDir);
+
+        assert.strictEqual(result.contextDir, path.join(tmpDir, '.ai-context'));
+        assert.strictEqual(result.projectRoot, tmpDir);
+
+        // Layout deve ter sido migrado
+        assert.strictEqual(fs.existsSync(path.join(tmpDir, '.ai-context', '.pactx', 'ledger.json')), true);
+        assert.strictEqual(fs.existsSync(legacyHistoryPath), false);
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});

@@ -89,6 +89,7 @@ export interface GlossaryTermOperation {
 export interface UpdatedRequirementOperation {
     id: string;
     satisfiedByAdd?: string[];
+    satisfiedByRemove?: string[];
     status?: RequirementStatus;
 }
 
@@ -131,10 +132,18 @@ export interface HistoryLedger {
     applied_updates: HistoryEntry[];
 }
 
+export interface LockData {
+    pid: number;
+    token: string;
+    createdAt: number;
+    heartbeatAt: number;
+}
+
 export type TransactionStatus = 'PREPARED' | 'APPLYING' | 'COMMITTED' | 'ROLLED_BACK' | 'FAILED';
 
 export interface TransactionSnapshotItem {
     path: string;
+    relativePath?: string;
     contentHash: string;
     content: string | null;
 }

@@ -28,7 +28,8 @@ export class TransactionEngine {
      * Returns the manifest file path for a given transaction hash.
      */
     static getTxFilePath(contextDir: string, txHash: string): string {
-        return path.join(TransactionEngine.getTransactionsDir(contextDir), `TX-${txHash}.json`);
+        const cleanHash = txHash.replace(/[^a-zA-Z0-9_-]/g, '');
+        return path.join(TransactionEngine.getTransactionsDir(contextDir), `TX-${cleanHash}.json`);
     }
 
     /**
@@ -47,12 +48,18 @@ export class TransactionEngine {
             const contentHash = content !== null
                 ? crypto.createHash('sha256').update(content).digest('hex')
                 : '';
+            const relativePath = path.relative(contextDir, path.resolve(filePath)).replace(/\\/g, '/');
             snapshot.push({
-                path: filePath,
+                path: relativePath,
+                relativePath,
                 contentHash,
                 content,
             });
         }
+
+        const relCreatedFiles = createdFiles.map(f =>
+            path.relative(contextDir, path.resolve(f)).replace(/\\/g, '/')
+        );
 
         const manifest: TransactionManifest = {
             txHash: plan.canonicalHash,
@@ -66,7 +73,7 @@ export class TransactionEngine {
             } : undefined,
             baseRevision: baseRevision || plan.baseRevision || '',
             snapshot,
-            createdFiles: [...createdFiles],
+            createdFiles: relCreatedFiles,
             plan,
         };
 
@@ -112,6 +119,18 @@ export class TransactionEngine {
      */
     static markRolledBack(contextDir: string, txHash: string): TransactionManifest {
         return TransactionEngine.updateStatus(contextDir, txHash, 'ROLLED_BACK');
+    }
+
+    /**
+     * Resolves a relative or absolute path against contextDir and ensures it does not escape.
+     */
+    static resolveAndValidateJail(contextDir: string, targetPath: string): string {
+        const resolved = path.resolve(contextDir, targetPath);
+        const rel = path.relative(contextDir, resolved);
+        if (rel.startsWith('..') || path.isAbsolute(rel)) {
+            throw new Error(`Security violation: Path "${targetPath}" escapes context jail.`);
+        }
+        return resolved;
     }
 
     /**
@@ -167,24 +186,42 @@ export class TransactionEngine {
                             }
                         }
 
-                        // 2. Restauração dos arquivos canônicos
+                        // 2. Restauração dos arquivos canônicos com validação de Jail
                         for (const item of manifest.snapshot) {
+                            const destPath = TransactionEngine.resolveAndValidateJail(contextDir, item.relativePath || item.path);
                             if (item.content === null) {
-                                if (fs.existsSync(item.path)) {
-                                    try { fs.unlinkSync(item.path); } catch {}
+                                if (fs.existsSync(destPath)) {
+                                    try { fs.unlinkSync(destPath); } catch {}
                                 }
                             } else {
-                                safeAtomicWriteFileSync(item.path, item.content, 'utf-8');
+                                safeAtomicWriteFileSync(destPath, item.content, 'utf-8');
                             }
                         }
 
-                        // 3. Remoção de arquivos criados inconsistentes
+                        // 3. Remoção de arquivos criados inconsistentes com validação de Jail
                         if (Array.isArray(manifest.createdFiles)) {
                             for (const createdPath of manifest.createdFiles) {
-                                if (fs.existsSync(createdPath)) {
-                                    try { fs.unlinkSync(createdPath); } catch {}
+                                const destPath = TransactionEngine.resolveAndValidateJail(contextDir, createdPath);
+                                if (fs.existsSync(destPath)) {
+                                    try { fs.unlinkSync(destPath); } catch {}
                                 }
                             }
+                        }
+
+                        // 4. Sincronização atômica WAL ↔ Ledger (remove transação revertida de ledger.json)
+                        const historyFile = path.join(contextDir, '.pactx', 'ledger.json');
+                        if (fs.existsSync(historyFile)) {
+                            try {
+                                const ledgerRaw = fs.readFileSync(historyFile, 'utf-8');
+                                const ledger = JSON.parse(ledgerRaw);
+                                if (Array.isArray(ledger.applied_updates)) {
+                                    const initialLen = ledger.applied_updates.length;
+                                    ledger.applied_updates = ledger.applied_updates.filter((u: any) => u.hash !== manifest.txHash);
+                                    if (ledger.applied_updates.length !== initialLen) {
+                                        safeAtomicWriteFileSync(historyFile, JSON.stringify(ledger, null, 2), 'utf-8');
+                                    }
+                                }
+                            } catch {}
                         }
 
                         manifest.status = 'ROLLED_BACK';
