@@ -1,6 +1,7 @@
 import yaml from 'yaml';
 import crypto from 'node:crypto';
 import { RawUpdatePayload } from './types';
+import { sanitizeBodyField } from './applier';
 
 const ADR_ID_REGEX = /^(auto|DEC-(?!0+$)\d{3,4})$/i;
 const REQ_ID_REGEX = /^(auto|REQ-(?!0+$)\d{3,4})$/i;
@@ -162,7 +163,7 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
 
     const warnings: string[] = [];
 
-    // Normalização de metadados de proveniência (source) com default 'conversation'
+    // Normalização de metadados de proveniência (source) com default 'conversation' e sanitização (P1-3)
     if (parsed.source && typeof parsed.source === 'object') {
         if (parsed.source.type !== undefined && parsed.source.type !== null) {
             const typeStr = String(parsed.source.type).trim().toLowerCase();
@@ -172,6 +173,12 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
             parsed.source.type = typeStr;
         } else {
             parsed.source.type = 'conversation';
+        }
+        if (parsed.source.model !== undefined && parsed.source.model !== null) {
+            parsed.source.model = sanitizeBodyField(String(parsed.source.model).trim());
+        }
+        if (parsed.source.session_topic !== undefined && parsed.source.session_topic !== null) {
+            parsed.source.session_topic = sanitizeBodyField(String(parsed.source.session_topic).trim());
         }
     }
 

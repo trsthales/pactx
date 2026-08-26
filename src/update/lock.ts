@@ -105,12 +105,12 @@ export class ContextLock {
             try {
                 const raw = fs.readFileSync(this.lockPath, 'utf-8');
                 const data = JSON.parse(raw);
-                // Liberação protegida: apenas remove se o token ou o PID corresponderem
-                if (data.token === this.token || data.pid === process.pid) {
+                // Liberação estrita: apenas remove se o token UUID de posse corresponder (P2-4)
+                if (data.token === this.token) {
                     fs.unlinkSync(this.lockPath);
                 }
             } catch {
-                try { fs.unlinkSync(this.lockPath); } catch {}
+                // Se o arquivo estiver corrompido e não conseguimos verificar o token, não removemos silenciosamente
             }
         }
     }

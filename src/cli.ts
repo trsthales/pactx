@@ -1,20 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import clipboardy from 'clipboardy';
 import pc from 'picocolors';
-import readline from 'node:readline';
-import fs from 'node:fs';
-import { initProject } from './init';
-import { composeContext } from './composer';
-import { parseAndValidateUpdate } from './update/parser';
-import { buildMutationPlan } from './update/planner';
-import { applyMutationPlan } from './update/applier';
-import { TransactionEngine } from './update/transaction';
-import { bootstrapPactx } from './core/bootstrap';
-import { renderStatus } from './commands/status';
-import { renderDiff } from './commands/diff';
-import { executeRollback } from './commands/rollback';
-import { renderDoctor } from './commands/doctor';
 
 const program = new Command();
 
@@ -26,8 +12,14 @@ program
 program
     .command('init')
     .description('Initialize .ai-context/ structure in current project')
-    .action(() => {
-        initProject();
+    .action(async () => {
+        try {
+            const { initProject } = await import('./init');
+            initProject();
+        } catch (err: any) {
+            console.error(pc.red(`✖ Error: ${err.message}`));
+            process.exit(1);
+        }
     });
 
 program
@@ -37,6 +29,10 @@ program
     .option('--stdout', 'Print to terminal only without copying to clipboard')
     .action(async (options) => {
         try {
+            const { bootstrapPactx } = await import('./core/bootstrap');
+            const { composeContext } = await import('./composer');
+            const clipboardy = (await import('clipboardy')).default;
+
             const { projectRoot } = bootstrapPactx(process.cwd());
             const output = composeContext(projectRoot, { short: options.short });
             const bytes = Buffer.byteLength(output, 'utf8');
@@ -73,6 +69,13 @@ program
     .option('--stdin', 'Read block from stdin (pipe)')
     .action(async (options) => {
         try {
+            const fs = await import('node:fs');
+            const readline = await import('node:readline');
+            const { bootstrapPactx } = await import('./core/bootstrap');
+            const { parseAndValidateUpdate } = await import('./update/parser');
+            const { buildMutationPlan } = await import('./update/planner');
+            const { applyMutationPlan } = await import('./update/applier');
+
             let rawInput = '';
 
             if (options.file) {
@@ -87,6 +90,7 @@ program
                 rawInput = fs.readFileSync(0, 'utf-8');
             } else {
                 try {
+                    const clipboardy = (await import('clipboardy')).default;
                     rawInput = await clipboardy.read();
                 } catch {
                     throw new Error('Could not read clipboard. Use --file or --stdin.');
@@ -197,6 +201,7 @@ program
     .option('-j, --json', 'Output full metrics as structured JSON')
     .action(async (options) => {
         try {
+            const { renderStatus } = await import('./commands/status');
             renderStatus(process.cwd(), { json: options.json });
         } catch (err: any) {
             console.error(pc.red(`✖ Error: ${err.message}`));
@@ -211,6 +216,7 @@ program
     .option('--stdin', 'Read block from stdin (pipe)')
     .action(async (options) => {
         try {
+            const { renderDiff } = await import('./commands/diff');
             await renderDiff(process.cwd(), { file: options.file, stdin: options.stdin });
         } catch (err: any) {
             console.error(pc.red(`✖ Error: ${err.message}`));
@@ -226,6 +232,7 @@ program
     .option('--force-cascade', 'Automatically rollback all subsequent dependent transactions')
     .action(async (hash, options) => {
         try {
+            const { executeRollback } = await import('./commands/rollback');
             await executeRollback(process.cwd(), hash, {
                 yes: options.yes,
                 dryRun: options.dryRun,
@@ -241,8 +248,9 @@ program
     .command('doctor')
     .description('Run integrity and consistency diagnostics across .ai-context/')
     .option('--fix', 'Automatically repair fixable discrepancies, remove stale locks, and prune old records')
-    .action((options) => {
+    .action(async (options) => {
         try {
+            const { renderDoctor } = await import('./commands/doctor');
             const exitCode = renderDoctor(process.cwd(), options.fix);
             if (exitCode !== 0 && !options.fix) {
                 process.exit(exitCode);
