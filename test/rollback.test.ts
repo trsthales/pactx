@@ -165,3 +165,46 @@ new_decisions:
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+test('P1-A Guard: pactx rollback é bloqueado quando há transação RECOVERY_REQUIRED ou FAILED', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-test-rollback-guard-'));
+    try {
+        initProject(tmpDir);
+        const contextDir = path.join(tmpDir, '.ai-context');
+        const transactionsDir = path.join(contextDir, '.pactx', 'transactions');
+
+        // Cria uma transação válida COMMITTED
+        const p1 = parseAndValidateUpdate(`
+\`\`\`pactx-update
+version: "1.1"
+state:
+  active_task: "Initial Task"
+\`\`\`
+`);
+        applyMutationPlan(tmpDir, buildMutationPlan(tmpDir, p1.payload, p1.canonicalHash));
+
+        // Injeta uma transação falha com status RECOVERY_REQUIRED
+        const badTxHash = 'failed_tx_abc123';
+        const badManifest: TransactionManifest = {
+            txHash: badTxHash,
+            status: 'RECOVERY_REQUIRED',
+            type: 'APPLY',
+            recoveryAttempts: 1,
+            createdAt: new Date().toISOString(),
+            baseRevision: 'rev1',
+            snapshot: [],
+            createdFiles: [],
+            plan: {} as any,
+        };
+        fs.writeFileSync(path.join(transactionsDir, `TX-${badTxHash}.json`), JSON.stringify(badManifest, null, 2), 'utf-8');
+
+        // Tentativa de rollback DEVE ser bloqueada
+        await assert.rejects(async () => {
+            await executeRollback(tmpDir, undefined, { yes: true });
+        }, /Repository blocked: Transaction TX-failed_tx_abc123 requires recovery \(Status: RECOVERY_REQUIRED\)\. Run 'pactx doctor --fix' before rolling back\./);
+
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+

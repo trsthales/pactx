@@ -56,8 +56,9 @@ export function sanitizeBodyField(val: string): string {
         .map(line => {
             const trimmed = line.trim();
             // Neutraliza cabeçalhos markdown (# a ######) transformando em citações
+            let processedLine = line;
             if (/^#{1,6}\s/.test(trimmed)) {
-                return line.replace(/^(\s*)#{1,6}\s*/, '$1> ');
+                processedLine = line.replace(/^(\s*)#{1,6}\s*/, '$1> ');
             }
             // Remove réguas horizontais que possam quebrar a hierarquia do documento
             if (/^[-*_]{3,}\s*$/.test(trimmed)) {
@@ -65,24 +66,128 @@ export function sanitizeBodyField(val: string): string {
             }
             // Neutraliza cercas de código de bloco
             if (/^`{3,}/.test(trimmed)) {
-                return line.replace(/`/g, "'");
+                processedLine = line.replace(/`/g, "'");
             }
-            return line;
+            return processedLine;
         })
         .join('\n')
         .trim();
 
-    // Neutraliza comentários e tags de sistema que possam manipular parsers de LLMs downstream (P0-01)
+    // Neutraliza comentários, tags HTML genéricas (<script>, <img>, etc.) e tags de sistema (P1-C)
     sanitized = sanitized
         .replace(/<!--/g, '&lt;!--')
         .replace(/-->/g, '--&gt;')
-        .replace(/<\/?(system|instruction|context|rules|prompt|pactx)[^>]*>/gi, '[tag-escaped]');
+        .replace(/<\/?([a-zA-Z][a-zA-Z0-9-]*)[^>]*>/gi, '[tag-escaped]')
+        .replace(/\b(javascript|vbscript|data):/gi, '[url-scheme-blocked]:');
 
     return sanitized;
 }
 
 function normalizeLine(line: string): string {
     return line.replace(/^[-*•]\s*/, '').trim().normalize('NFC').toLowerCase();
+}
+
+export function computeRequirementsContent(
+    currentContent: string | null,
+    createdRequirements: RequirementItem[] = [],
+    updatedRequirements: any[] = []
+): string {
+    let existingReqs: RequirementItem[] = [];
+    const existingBodyStatements = new Map<string, string>();
+    let existingSpecVersion = '1.0';
+
+    if (currentContent) {
+        const fmMatch = currentContent.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+        if (fmMatch) {
+            try {
+                const parsedFm = yaml.parse(fmMatch[1]);
+                if (parsedFm) {
+                    if (parsedFm.spec_version) existingSpecVersion = String(parsedFm.spec_version);
+                    if (Array.isArray(parsedFm.requirements)) existingReqs = parsedFm.requirements;
+                }
+            } catch {}
+        }
+        const bodyText = currentContent.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+        const sections = bodyText.split(/(?=^###\s*\[REQ-\d+\])/m);
+        for (const sec of sections) {
+            const headerMatch = sec.match(/^###\s*\[(REQ-\d+)\][^\r\n]*/i);
+            if (headerMatch) {
+                const reqId = headerMatch[1].toUpperCase();
+                const statementText = sec.replace(/^###\s*\[REQ-\d+\][^\r\n]*\r?\n?/, '').trim();
+                existingBodyStatements.set(reqId, statementText);
+            }
+        }
+    }
+
+    // Merge created requirements
+    for (const req of createdRequirements) {
+        const existingIdx = existingReqs.findIndex(r => r.id.toUpperCase() === req.id.toUpperCase());
+        if (existingIdx >= 0) {
+            existingReqs[existingIdx] = {
+                ...existingReqs[existingIdx],
+                type: req.type,
+                title: req.title,
+                status: req.status,
+            };
+        } else {
+            existingReqs.push({ ...req });
+        }
+        existingBodyStatements.set(req.id.toUpperCase(), sanitizeBodyField(req.statement));
+    }
+
+    // Merge updated requirements (e.g. satisfied_by from ADRs)
+    for (const upd of updatedRequirements) {
+        const existingReq = existingReqs.find(r => r.id.toUpperCase() === upd.id.toUpperCase());
+        if (existingReq) {
+            if (upd.satisfiedByRemove && upd.satisfiedByRemove.length > 0) {
+                if (existingReq.satisfied_by) {
+                    const removeSet = new Set(upd.satisfiedByRemove.map((id: string) => id.toUpperCase()));
+                    existingReq.satisfied_by = existingReq.satisfied_by.filter((id: string) => !removeSet.has(id.toUpperCase()));
+                }
+            }
+            if (upd.satisfiedByAdd && upd.satisfiedByAdd.length > 0) {
+                if (!existingReq.satisfied_by) existingReq.satisfied_by = [];
+                for (const adrId of upd.satisfiedByAdd) {
+                    if (!existingReq.satisfied_by.includes(adrId)) {
+                        existingReq.satisfied_by.push(adrId);
+                    }
+                }
+            }
+            if (upd.status) {
+                existingReq.status = upd.status;
+            }
+        }
+    }
+
+    const reqFrontmatter = {
+        spec_version: existingSpecVersion,
+        requirements: existingReqs.map(r => {
+            const obj: any = {
+                id: r.id,
+                status: r.status || 'active',
+                type: r.type || 'functional',
+                title: sanitizeBodyField(r.title),
+            };
+            if (r.satisfied_by && r.satisfied_by.length > 0) {
+                obj.satisfied_by = r.satisfied_by;
+            }
+            return obj;
+        }),
+    };
+
+    const fmYaml = yaml.stringify(reqFrontmatter).trim();
+    let reqBody = `# Requirements & Business Rules\n\n`;
+    for (const r of existingReqs) {
+        const statement = existingBodyStatements.get(r.id.toUpperCase()) || '';
+        reqBody += `### [${r.id}] ${sanitizeBodyField(r.title)}\n`;
+        if (statement) {
+            reqBody += `${statement}\n\n`;
+        } else {
+            reqBody += `\n`;
+        }
+    }
+
+    return `---\n${fmYaml}\n---\n\n${reqBody.trim()}\n`;
 }
 
 export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
@@ -245,15 +350,26 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
                 });
             }
         }
+
         for (const adr of plan.operations.supersededAdrs || []) {
             recordSnapshot(adr.targetPath);
         }
+
+        let calculatedReqContent: string | null = null;
         if ((plan.operations.createdRequirements?.length ?? 0) > 0 || (plan.operations.updatedRequirements?.length ?? 0) > 0 || fs.existsSync(requirementsPath)) {
             recordSnapshot(requirementsPath);
-            if (snapshot.get(requirementsPath) === null) {
+            if ((plan.operations.createdRequirements?.length ?? 0) > 0 || (plan.operations.updatedRequirements?.length ?? 0) > 0) {
+                calculatedReqContent = computeRequirementsContent(
+                    snapshot.get(requirementsPath) || null,
+                    plan.operations.createdRequirements || [],
+                    plan.operations.updatedRequirements || []
+                );
+            }
+            if (snapshot.get(requirementsPath) === null && calculatedReqContent !== null) {
+                const reqHash = crypto.createHash('sha256').update(calculatedReqContent, 'utf-8').digest('hex');
                 createdFiles.push({
                     relativePath: path.relative(contextDir, requirementsPath).replace(/\\/g, '/'),
-                    afterHash: '',
+                    afterHash: reqHash,
                 });
             }
         }
@@ -319,104 +435,8 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
         }
 
         // 2.5. Atualizar requirements.md (Semântica de PATCH: preserva requisitos existentes)
-        if ((plan.operations.createdRequirements?.length ?? 0) > 0 || (plan.operations.updatedRequirements?.length ?? 0) > 0) {
-            let existingReqs: RequirementItem[] = [];
-            const existingBodyStatements = new Map<string, string>();
-            let existingSpecVersion = '1.0';
-
-            if (fs.existsSync(requirementsPath)) {
-                const raw = fs.readFileSync(requirementsPath, 'utf-8');
-                const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-                if (fmMatch) {
-                    try {
-                        const parsedFm = yaml.parse(fmMatch[1]);
-                        if (parsedFm) {
-                            if (parsedFm.spec_version) existingSpecVersion = String(parsedFm.spec_version);
-                            if (Array.isArray(parsedFm.requirements)) existingReqs = parsedFm.requirements;
-                        }
-                    } catch {}
-                }
-                const bodyText = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
-                const sections = bodyText.split(/(?=^###\s*\[REQ-\d+\])/m);
-                for (const sec of sections) {
-                    const headerMatch = sec.match(/^###\s*\[(REQ-\d+)\][^\r\n]*/i);
-                    if (headerMatch) {
-                        const reqId = headerMatch[1].toUpperCase();
-                        const statementText = sec.replace(/^###\s*\[REQ-\d+\][^\r\n]*\r?\n?/, '').trim();
-                        existingBodyStatements.set(reqId, statementText);
-                    }
-                }
-            }
-
-            // Merge created requirements
-            for (const req of plan.operations.createdRequirements || []) {
-                const existingIdx = existingReqs.findIndex(r => r.id.toUpperCase() === req.id.toUpperCase());
-                if (existingIdx >= 0) {
-                    existingReqs[existingIdx] = {
-                        ...existingReqs[existingIdx],
-                        type: req.type,
-                        title: req.title,
-                        status: req.status,
-                    };
-                } else {
-                    existingReqs.push({ ...req });
-                }
-                existingBodyStatements.set(req.id.toUpperCase(), sanitizeBodyField(req.statement));
-            }
-
-            // Merge updated requirements (e.g. satisfied_by from ADRs)
-            for (const upd of plan.operations.updatedRequirements || []) {
-                const existingReq = existingReqs.find(r => r.id.toUpperCase() === upd.id.toUpperCase());
-                if (existingReq) {
-                    if (upd.satisfiedByRemove && upd.satisfiedByRemove.length > 0) {
-                        if (existingReq.satisfied_by) {
-                            const removeSet = new Set(upd.satisfiedByRemove.map(id => id.toUpperCase()));
-                            existingReq.satisfied_by = existingReq.satisfied_by.filter(id => !removeSet.has(id.toUpperCase()));
-                        }
-                    }
-                    if (upd.satisfiedByAdd && upd.satisfiedByAdd.length > 0) {
-                        if (!existingReq.satisfied_by) existingReq.satisfied_by = [];
-                        for (const adrId of upd.satisfiedByAdd) {
-                            if (!existingReq.satisfied_by.includes(adrId)) {
-                                existingReq.satisfied_by.push(adrId);
-                            }
-                        }
-                    }
-                    if (upd.status) {
-                        existingReq.status = upd.status;
-                    }
-                }
-            }
-
-            const reqFrontmatter = {
-                spec_version: existingSpecVersion,
-                requirements: existingReqs.map(r => {
-                    const obj: any = {
-                        id: r.id,
-                        status: r.status || 'active',
-                        type: r.type || 'functional',
-                        title: sanitizeBodyField(r.title),
-                    };
-                    if (r.satisfied_by && r.satisfied_by.length > 0) {
-                        obj.satisfied_by = r.satisfied_by;
-                    }
-                    return obj;
-                }),
-            };
-
-            const fmYaml = yaml.stringify(reqFrontmatter).trim();
-            let reqBody = `# Requirements & Business Rules\n\n`;
-            for (const r of existingReqs) {
-                const statement = existingBodyStatements.get(r.id.toUpperCase()) || '';
-                reqBody += `### [${r.id}] ${sanitizeBodyField(r.title)}\n`;
-                if (statement) {
-                    reqBody += `${statement}\n\n`;
-                } else {
-                    reqBody += `\n`;
-                }
-            }
-
-            safeAtomicWriteFileSync(requirementsPath, `---\n${fmYaml}\n---\n\n${reqBody.trim()}\n`, 'utf-8');
+        if (calculatedReqContent !== null) {
+            safeAtomicWriteFileSync(requirementsPath, calculatedReqContent, 'utf-8');
         }
 
         // 3. Atualizar state.md (Semântica de PATCH: preserva campos não fornecidos)
