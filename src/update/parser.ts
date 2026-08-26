@@ -3,14 +3,18 @@ import crypto from 'node:crypto';
 import { RawUpdatePayload } from './types';
 
 const ADR_ID_REGEX = /^(auto|DEC-(?!0+$)\d{3,4})$/i;
+const REQ_ID_REGEX = /^(auto|REQ-(?!0+$)\d{3,4})$/i;
 const MAX_INPUT_SIZE = 512 * 1024; // 512KB
 const MAX_ARRAY_ITEMS = 100;
 const MAX_STRING_LENGTH = 2000;
 const MAX_DECISIONS_PER_BATCH = 20;
+const MAX_REQUIREMENTS_PER_BATCH = 20;
 const MAX_GLOSSARY_TERMS_PER_BATCH = 50;
 
 const VALID_STATUSES = ['IN_PROGRESS', 'BLOCKED', 'COMPLETED'] as const;
 const VALID_MODELS = ['Medium', 'High'] as const;
+const VALID_REQ_TYPES = ['functional', 'security', 'performance', 'compliance'] as const;
+const VALID_SOURCE_TYPES = ['conversation', 'agent', 'manual', 'document'] as const;
 
 const HOMOGLYPH_MAP: Record<string, string> = {
     '\u0430': 'a', '\u0410': 'A', // Cyrillic a
@@ -151,12 +155,25 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
     }
 
     const parsedVersion = String(parsed.version ?? '').trim();
-    if (parsedVersion !== '1.0' && parsedVersion !== '1') {
-        throw new Error(`Unsupported schema version: "${parsed.version}". Expected: "1.0".`);
+    if (parsedVersion !== '1.0' && parsedVersion !== '1' && parsedVersion !== '1.1') {
+        throw new Error(`Unsupported schema version: "${parsed.version}". Expected: "1.0" or "1.1".`);
     }
-    parsed.version = '1.0';
+    parsed.version = parsedVersion === '1.1' ? '1.1' : '1.0';
 
     const warnings: string[] = [];
+
+    // Normalização de metadados de proveniência (source) com default 'conversation'
+    if (parsed.source && typeof parsed.source === 'object') {
+        if (parsed.source.type !== undefined && parsed.source.type !== null) {
+            const typeStr = String(parsed.source.type).trim().toLowerCase();
+            if (!VALID_SOURCE_TYPES.includes(typeStr as any)) {
+                throw new Error(`Invalid source.type: "${parsed.source.type}". Allowed values: ${VALID_SOURCE_TYPES.join(', ')}.`);
+            }
+            parsed.source.type = typeStr;
+        } else {
+            parsed.source.type = 'conversation';
+        }
+    }
 
     // Proteção de Tipagem Defensiva e Contenção de Cardinalidade para Coleções de Estado
     if (parsed.state && typeof parsed.state === 'object') {
@@ -189,7 +206,37 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
         }
     }
 
-    // 1. Validação de Segurança dos Identificadores de ADR (Path Traversal Jail) e Cardinalidade
+    // 1. Validação de Requisitos (new_requirements)
+    if (parsed.new_requirements && Array.isArray(parsed.new_requirements)) {
+        if (parsed.new_requirements.length > MAX_REQUIREMENTS_PER_BATCH) {
+            warnings.push(`Limit exceeded: [new_requirements] contained ${parsed.new_requirements.length} items and was truncated to the first ${MAX_REQUIREMENTS_PER_BATCH}.`);
+            parsed.new_requirements = parsed.new_requirements.slice(0, MAX_REQUIREMENTS_PER_BATCH);
+        }
+        for (const r of parsed.new_requirements) {
+            if (r && typeof r === 'object') {
+                if (r.id !== undefined && r.id !== null) {
+                    const idStr = String(r.id).trim();
+                    if (!REQ_ID_REGEX.test(idStr)) {
+                        throw new Error(`Invalid requirement identifier: "${r.id}". Must match /^(auto|REQ-(?!0+$)\\d{3,4})$/i.`);
+                    }
+                    r.id = idStr.toLowerCase() === 'auto' ? 'auto' : idStr.toUpperCase();
+                }
+                if (r.type !== undefined && r.type !== null) {
+                    const typeStr = String(r.type).trim().toLowerCase();
+                    if (!VALID_REQ_TYPES.includes(typeStr as any)) {
+                        throw new Error(`Invalid requirement type: "${r.type}". Allowed values: ${VALID_REQ_TYPES.join(', ')}.`);
+                    }
+                    r.type = typeStr;
+                } else {
+                    r.type = 'functional';
+                }
+                r.title = r.title ? String(r.title).trim() : 'Untitled Requirement';
+                r.statement = r.statement ? String(r.statement).trim() : '';
+            }
+        }
+    }
+
+    // 2. Validação de Segurança dos Identificadores de ADR (Path Traversal Jail) e Cardinalidade
     if (parsed.new_decisions && Array.isArray(parsed.new_decisions)) {
         if (parsed.new_decisions.length > MAX_DECISIONS_PER_BATCH) {
             warnings.push(`Limit exceeded: [new_decisions] contained ${parsed.new_decisions.length} items and was truncated to the first ${MAX_DECISIONS_PER_BATCH}.`);
@@ -202,6 +249,15 @@ export function parseAndValidateUpdate(rawContent: string): ParseResult {
                     throw new Error(`Invalid decision identifier: "${d.id}". Must match /^(auto|DEC-(?!0+$)\\d{3,4})$/i.`);
                 }
                 d.id = idStr.toLowerCase() === 'auto' ? 'auto' : idStr.toUpperCase();
+            }
+            if (d && typeof d === 'object' && d.satisfies !== undefined && d.satisfies !== null) {
+                const satList = ensureStringArray(d.satisfies);
+                for (const satId of satList) {
+                    if (!REQ_ID_REGEX.test(satId) || satId.toLowerCase() === 'auto') {
+                        throw new Error(`Invalid requirement identifier in satisfies: "${satId}". Must match /^REQ-(?!0+$)\\d{3,4}$/i.`);
+                    }
+                }
+                d.satisfies = satList.map(s => s.toUpperCase());
             }
         }
     }

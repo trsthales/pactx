@@ -6,7 +6,11 @@ export class ContextLock {
     private fd: number | null = null;
 
     constructor(contextDir: string) {
-        this.lockPath = path.join(contextDir, '.pactx.lock');
+        const pactxDir = path.join(contextDir, '.pactx');
+        if (!fs.existsSync(pactxDir)) {
+            fs.mkdirSync(pactxDir, { recursive: true });
+        }
+        this.lockPath = path.join(pactxDir, '.pactx.lock');
     }
 
     acquire(timeoutMs = 5000): void {

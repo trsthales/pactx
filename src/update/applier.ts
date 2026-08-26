@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'yaml';
-import { MutationPlan, HistoryLedger } from './types';
+import { MutationPlan, HistoryLedger, RequirementItem } from './types';
 import { ContextLock } from './lock';
 import { getCurrentContextRevision } from '../composer';
 import { getNextAdrId } from './planner';
+import { ensureStorageLayout } from './migration';
+import { TransactionEngine } from './transaction';
 
 const MAX_HISTORY_ENTRIES = 500;
 
@@ -85,11 +87,13 @@ function normalizeLine(line: string): string {
 export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
     const contextDir = path.join(cwd, '.ai-context');
     const decisionsDir = path.join(contextDir, 'decisions');
-    const historyFile = path.join(contextDir, '.pactx-history.json');
 
     if (!fs.existsSync(decisionsDir)) {
         fs.mkdirSync(decisionsDir, { recursive: true });
     }
+
+    ensureStorageLayout(contextDir);
+    const historyFile = path.join(contextDir, '.pactx', 'ledger.json');
 
     const lock = new ContextLock(contextDir);
     lock.acquire();
@@ -120,6 +124,9 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
     const handleSignal = () => {
         if (isApplying) {
             rollback();
+            try {
+                TransactionEngine.markRolledBack(contextDir, plan.canonicalHash);
+            } catch {}
             lock.release();
             process.exit(130);
         }
@@ -182,16 +189,49 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             }
         }
 
-        // 1. Criar Novos ADRs com Serialização Segura & Sanitização de Body
-        for (const adr of plan.operations.createdAdrs) {
+        const requirementsPath = path.join(contextDir, 'requirements.md');
+
+        // Pré-gravação de Snapshot Completo para WAL
+        for (const adr of plan.operations.createdAdrs || []) {
             recordSnapshot(adr.targetPath);
-            const frontmatter = {
+            if (snapshot.get(adr.targetPath) === null) {
+                createdFiles.push(adr.targetPath);
+            }
+        }
+        for (const adr of plan.operations.supersededAdrs || []) {
+            recordSnapshot(adr.targetPath);
+        }
+        if ((plan.operations.createdRequirements?.length ?? 0) > 0 || (plan.operations.updatedRequirements?.length ?? 0) > 0 || fs.existsSync(requirementsPath)) {
+            recordSnapshot(requirementsPath);
+            if (snapshot.get(requirementsPath) === null) {
+                createdFiles.push(requirementsPath);
+            }
+        }
+        if (plan.operations.stateUpdate) {
+            recordSnapshot(plan.operations.stateUpdate.targetPath);
+        }
+        if ((plan.operations.appendedGlossaryTerms?.length ?? 0) > 0) {
+            recordSnapshot(path.join(contextDir, 'glossary.md'));
+        }
+        recordSnapshot(historyFile);
+
+        // WAL: 1. PREPARED -> 2. APPLYING
+        const baseRevision = plan.appliedRevision || getCurrentContextRevision(contextDir);
+        TransactionEngine.createTransaction(contextDir, plan, snapshot, createdFiles, baseRevision);
+        TransactionEngine.markApplying(contextDir, plan.canonicalHash);
+
+        // 1. Criar Novos ADRs com Serialização Segura & Sanitização de Body
+        for (const adr of plan.operations.createdAdrs || []) {
+            const frontmatter: any = {
                 spec_version: '1.0',
                 id: adr.id,
                 title: sanitizeBodyField(adr.title),
                 status: 'active',
-                date: adr.date,
             };
+            if (adr.satisfies && adr.satisfies.length > 0) {
+                frontmatter.satisfies = adr.satisfies;
+            }
+            frontmatter.date = adr.date;
 
             const frontmatterYaml = yaml.stringify(frontmatter).trim();
             const sanitizedDecision = sanitizeBodyField(adr.decision);
@@ -200,13 +240,10 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             const fullContent = `---\n${frontmatterYaml}\n---\n\n${body}`;
 
             safeAtomicWriteFileSync(adr.targetPath, fullContent, 'utf-8');
-            if (snapshot.get(adr.targetPath) === null) {
-                createdFiles.push(adr.targetPath);
-            }
         }
 
         // 2. Atualizar ADRs Substituídos
-        for (const adr of plan.operations.supersededAdrs) {
+        for (const adr of plan.operations.supersededAdrs || []) {
             if (fs.existsSync(adr.targetPath)) {
                 recordSnapshot(adr.targetPath);
                 const original = fs.readFileSync(adr.targetPath, 'utf-8');
@@ -229,6 +266,101 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
                     throw new Error(`Invalid or corrupted frontmatter structure in ADR: ${adr.targetPath}`);
                 }
             }
+        }
+
+        // 2.5. Atualizar requirements.md (Semântica de PATCH: preserva requisitos existentes)
+        if ((plan.operations.createdRequirements?.length ?? 0) > 0 || (plan.operations.updatedRequirements?.length ?? 0) > 0) {
+            let existingReqs: RequirementItem[] = [];
+            const existingBodyStatements = new Map<string, string>();
+            let existingSpecVersion = '1.0';
+
+            if (fs.existsSync(requirementsPath)) {
+                const raw = fs.readFileSync(requirementsPath, 'utf-8');
+                const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+                if (fmMatch) {
+                    try {
+                        const parsedFm = yaml.parse(fmMatch[1]);
+                        if (parsedFm) {
+                            if (parsedFm.spec_version) existingSpecVersion = String(parsedFm.spec_version);
+                            if (Array.isArray(parsedFm.requirements)) existingReqs = parsedFm.requirements;
+                        }
+                    } catch {}
+                }
+                const bodyText = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+                const sections = bodyText.split(/(?=^###\s*\[REQ-\d+\])/m);
+                for (const sec of sections) {
+                    const headerMatch = sec.match(/^###\s*\[(REQ-\d+)\][^\r\n]*/i);
+                    if (headerMatch) {
+                        const reqId = headerMatch[1].toUpperCase();
+                        const statementText = sec.replace(/^###\s*\[REQ-\d+\][^\r\n]*\r?\n?/, '').trim();
+                        existingBodyStatements.set(reqId, statementText);
+                    }
+                }
+            }
+
+            // Merge created requirements
+            for (const req of plan.operations.createdRequirements || []) {
+                const existingIdx = existingReqs.findIndex(r => r.id.toUpperCase() === req.id.toUpperCase());
+                if (existingIdx >= 0) {
+                    existingReqs[existingIdx] = {
+                        ...existingReqs[existingIdx],
+                        type: req.type,
+                        title: req.title,
+                        status: req.status,
+                    };
+                } else {
+                    existingReqs.push({ ...req });
+                }
+                existingBodyStatements.set(req.id.toUpperCase(), sanitizeBodyField(req.statement));
+            }
+
+            // Merge updated requirements (e.g. satisfied_by from ADRs)
+            for (const upd of plan.operations.updatedRequirements || []) {
+                const existingReq = existingReqs.find(r => r.id.toUpperCase() === upd.id.toUpperCase());
+                if (existingReq) {
+                    if (upd.satisfiedByAdd && upd.satisfiedByAdd.length > 0) {
+                        if (!existingReq.satisfied_by) existingReq.satisfied_by = [];
+                        for (const adrId of upd.satisfiedByAdd) {
+                            if (!existingReq.satisfied_by.includes(adrId)) {
+                                existingReq.satisfied_by.push(adrId);
+                            }
+                        }
+                    }
+                    if (upd.status) {
+                        existingReq.status = upd.status;
+                    }
+                }
+            }
+
+            const reqFrontmatter = {
+                spec_version: existingSpecVersion,
+                requirements: existingReqs.map(r => {
+                    const obj: any = {
+                        id: r.id,
+                        status: r.status || 'active',
+                        type: r.type || 'functional',
+                        title: sanitizeBodyField(r.title),
+                    };
+                    if (r.satisfied_by && r.satisfied_by.length > 0) {
+                        obj.satisfied_by = r.satisfied_by;
+                    }
+                    return obj;
+                }),
+            };
+
+            const fmYaml = yaml.stringify(reqFrontmatter).trim();
+            let reqBody = `# Requirements & Business Rules\n\n`;
+            for (const r of existingReqs) {
+                const statement = existingBodyStatements.get(r.id.toUpperCase()) || '';
+                reqBody += `### [${r.id}] ${sanitizeBodyField(r.title)}\n`;
+                if (statement) {
+                    reqBody += `${statement}\n\n`;
+                } else {
+                    reqBody += `\n`;
+                }
+            }
+
+            safeAtomicWriteFileSync(requirementsPath, `---\n${fmYaml}\n---\n\n${reqBody.trim()}\n`, 'utf-8');
         }
 
         // 3. Atualizar state.md (Semântica de PATCH: preserva campos não fornecidos)
@@ -419,7 +551,7 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
             try {
                 ledger = JSON.parse(fs.readFileSync(historyFile, 'utf-8'));
             } catch (err: any) {
-                throw new Error(`Integrity failure: The history ledger .pactx-history.json is corrupted (${err.message}). Operation aborted.`);
+                throw new Error(`Integrity failure: The history ledger .pactx/ledger.json is corrupted (${err.message}). Operation aborted.`);
             }
         }
 
@@ -443,9 +575,16 @@ export function applyMutationPlan(cwd: string, plan: MutationPlan): void {
 
         safeAtomicWriteFileSync(historyFile, JSON.stringify(ledger, null, 2), 'utf-8');
 
+        // WAL: 3. COMMITTED
+        TransactionEngine.markCommitted(contextDir, plan.canonicalHash);
+        TransactionEngine.pruneTransactions(contextDir);
+
     } catch (error: any) {
         // FAIL-CLOSED: Rollback Transacional Instantâneo
         rollback();
+        try {
+            TransactionEngine.markRolledBack(contextDir, plan.canonicalHash);
+        } catch {}
         throw new Error(`Transactional failure during write. Rollback executed successfully. Cause: ${error.message}`);
     } finally {
         isApplying = false;

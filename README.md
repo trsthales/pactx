@@ -66,9 +66,10 @@ This scaffolds the canonical directory structure:
 ```text
 .ai-context/
 ├── project.md      # Static identity, stack, and non-negotiable rules
+├── requirements.md # Canonical requirements & business rules (REQ-001)
 ├── state.md        # Active task, facts, blockers, rejected hypotheses
 ├── glossary.md     # Invariant contracts, table names, domain terms
-└── decisions/      # Versioned micro-ADRs (DEC-001.md, DEC-002.md)
+└── decisions/      # Versioned micro-ADRs (DEC-001.md)
 ```
 
 ### 2. Pack Context & Start Session (1 Second)
@@ -105,8 +106,12 @@ Canonical Mutation Plan:
    • Next Action: "Implementar validação do StudentPIN no authController"
    • [+] Fact: "Rate limit de login por PIN deve ser restrito a 5 tentativas por minuto"
    • [+] Discarded Hypothesis: "O login de alunos NÃO deve exigir e-mail ou senha"
+📋 .ai-context/requirements.md [CREATE]
+   • [REQ-002] "Student PIN Security Policy" (functional)
+     Statement: "Alunos devem se autenticar através de PIN de 4 dígitos com rate limit restrito."
 🏛️  .ai-context/decisions/DEC-002.md [CREATE]
    • Title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
+   • Satisfies: REQ-002
    • Decision: "Utilizar combinação de Turma + PIN com hash seguro no PostgreSQL"
 📖 .ai-context/glossary.md [APPEND]
    • StudentPIN: "Código numérico de 4 dígitos atribuído ao aluno"
@@ -115,21 +120,22 @@ Canonical Mutation Plan:
 ? Apply canonical changes to repository? (Y/n) y
 
 ✔ Canonical state updated successfully!
-📋 Audit ledger recorded in .ai-context/.pactx-history.json
+📋 Audit ledger recorded in .ai-context/.pactx/ledger.json
 ```
 
 ---
 
-## The `pactx-update` Protocol Schema
+## The `pactx-update` Protocol Schema (v1.1)
 
 AIs emit the candidate update block wrapped in the `pactx-update` code fence:
 
 ````yaml
 ```pactx-update
-version: "1.0"
+version: "1.1"
 base_revision: "2a0de5"
 
 source:
+  type: "conversation" # conversation | agent | manual | document
   model: "Gemini 1.5 Pro"
   session_topic: "Implementação da autenticação por PIN"
 
@@ -145,11 +151,18 @@ state:
     - "O login de alunos NÃO deve exigir e-mail ou senha alfanumérica"
   next_action: "Implementar validação no controller e aplicar rate limit"
 
+new_requirements:
+  - id: "auto" # automatically generates REQ-002
+    type: "functional" # functional | security | performance | compliance
+    title: "Student PIN Security Policy"
+    statement: "Alunos devem se autenticar através de PIN de 4 dígitos com rate limit restrito."
+
 new_decisions:
   - id: "auto" # pactx automatically calculates next sequence (DEC-002)
     title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
     reason: "Alunos do ensino fundamental possuem fricção com senhas complexas"
     decision: "Utilizar Turma + PIN de 4 dígitos com hash seguro"
+    satisfies: ["REQ-002"]
 
 superseded_decisions:
   - id: "DEC-001"
@@ -166,13 +179,20 @@ new_glossary_terms:
 
 ## CLI Reference
 
-### Packing Commands
+### Core Commands
 | Command / Flag | Description |
 |---|---|
 | `pactx` / `pactx pack` | Reads repository state, copies context pack to clipboard, and prints stats |
 | `pactx init` | Scaffolds the `.ai-context/` directory with templates |
-| `pactx --short` | Generates a compact pack omitting glossary for tight token budgets |
-| `pactx --stdout` | Dumps the markdown directly to terminal (ideal for pipes or CLI tools) |
+| `pactx status` | Displays visual executive cognitive memory dashboard and git runtime state |
+| `pactx status --json` | Emits full structured status as machine-readable JSON |
+| `pactx diff` | Inspects and displays color-coded mutation plan without writing to disk |
+| `pactx diff --file <path>` | Inspects mutation plan from a specific file |
+| `pactx diff --stdin` | Inspects mutation plan piped from stdin |
+| `pactx rollback [hash]` | Graph-safe & WAL-protected rollback of latest transaction (LIFO) or specific hash |
+| `pactx rollback --force-cascade` | Automatically cascades rollback across all dependent subsequent transactions |
+| `pactx doctor` | Validates repository health against 8 integrity and consistency rules |
+| `pactx doctor --fix` | Automatically repairs stale locks, cleans orphan temps, and prunes expired records |
 
 ### Ingestion Commands (`pactx update`)
 | Command / Flag | Description |
@@ -189,11 +209,12 @@ new_glossary_terms:
 
 `pactx update` treats AI outputs as **untrusted candidate input**:
 
-1. **Path Traversal Jail:** ADR identifiers are restricted to `/^(auto|DEC-\d{3,4})$/i`. File writes are strictly jailed within `.ai-context/`.
-2. **Safe AST Serialization:** Zero naive string template interpolation for YAML. All frontmatter is safely generated via formal YAML dumpers to prevent structural injection.
-3. **Multi-File Atomic Commit & Rollback:** Changes are calculated in memory with pre-flight snapshots. If any write fails, a complete rollback is performed instantly (*Fail-Closed*).
-4. **Canonical Idempotency:** Payloads are normalized and hashed with SHA-256 into `.ai-context/.pactx-history.json`. Re-running the same clipboard results in a safe No-Op.
-5. **Anti-Poisoning Full-Text Review:** The terminal displays the full literal text of every incoming decision, fact, and hypothesis before prompting for human approval.
+1. **Write-Ahead Logging (WAL):** Multi-file writes are orchestrated through atomic WAL manifests (`PREPARED` -> `APPLYING` -> `COMMITTED` / `ROLLED_BACK`). Crashes automatically trigger boot auto-recovery.
+2. **Path Traversal Jail:** ADR and Requirement identifiers are strictly constrained to `/^(auto|DEC-\d{3,4}|REQ-\d{3,4})$/i`. File writes cannot escape `.ai-context/`.
+3. **Safe AST Serialization:** Zero naive string template interpolation for YAML. All frontmatter is safely generated via formal YAML dumpers.
+4. **Graph-Safe Dependency Rollbacks:** Rollbacks analyze downstream links (`satisfies`, `superseded_by`) and prevent inconsistent states.
+5. **Canonical Idempotency:** Payloads are hashed with SHA-256 into `.ai-context/.pactx/ledger.json`. Re-running the same clipboard results in a safe No-Op.
+6. **Anti-Poisoning Full-Text Review:** The terminal displays the full literal text of every incoming decision, requirement, fact, and hypothesis before prompting for human approval.
 
 ---
 
@@ -202,12 +223,16 @@ new_glossary_terms:
 ```text
 .ai-context/
 ├── project.md            # Vision, technology stack, and invariant rules
+├── requirements.md       # Canonical requirements & business rules (REQ-001)
 ├── state.md              # Active task, completed items, facts, and rejected hypotheses
 ├── glossary.md           # Domain terms, API contracts, and entity definitions
-├── .pactx-history.json   # Audit ledger tracking applied SHA-256 update hashes
-└── decisions/
-    ├── DEC-001.md        # Active or superseded ADRs with structural lineage
-    └── DEC-002.md
+├── decisions/
+│   ├── DEC-001.md        # Active or superseded ADRs with structural lineage & satisfies links
+│   └── DEC-002.md
+└── .pactx/
+    ├── ledger.json       # Audit ledger tracking applied SHA-256 update hashes
+    ├── .pactx.lock       # Atomic concurrency lockfile
+    └── transactions/     # Write-Ahead Log (WAL) manifests (TX-<hash>.json)
 ```
 
 ---
