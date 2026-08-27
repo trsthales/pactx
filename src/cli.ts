@@ -196,6 +196,25 @@ program
     });
 
 program
+    .command('extract [file]')
+    .description('Extract state and decisions from a chat transcript (out-of-band extraction)')
+    .option('--stdin', 'Read transcript from standard input pipe')
+    .option('--dry-run', 'Display the extracted candidate update without modifying disk')
+    .option('-y, --yes', 'Apply the extracted mutation without interactive confirmation')
+    .option('--force', 'Force application even with critical warnings (e.g., Stale Context with -y)')
+    .option('--model <name>', 'Model to use for semantic extraction (e.g. gemini-2.5-flash, claude-3-5-haiku)')
+    .option('--api-key <key>', 'API key for extraction model (or via PACTX_API_KEY env)')
+    .action(async (file, options) => {
+        try {
+            const { executeExtract } = await import('./commands/extract');
+            await executeExtract(process.cwd(), file, options);
+        } catch (err: any) {
+            console.error(pc.red(`✖ Error: ${err.message}`));
+            process.exit(1);
+        }
+    });
+
+program
     .command('status')
     .description('Display status and cognitive memory metrics of the repository')
     .option('-j, --json', 'Output full metrics as structured JSON')
