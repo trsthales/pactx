@@ -17,6 +17,8 @@ export interface ExtractCommandOptions extends ModelExtractOptions {
   force?: boolean;
 }
 
+const MAX_TRANSCRIPT_BYTES = 10 * 1024 * 1024; // 10MB
+
 export async function executeExtract(
   cwd: string = process.cwd(),
   file?: string,
@@ -27,6 +29,10 @@ export async function executeExtract(
   if (file) {
     if (!fs.existsSync(file)) {
       throw new Error(`Transcript file not found: ${file}`);
+    }
+    const stat = fs.statSync(file);
+    if (stat.size > MAX_TRANSCRIPT_BYTES) {
+      throw new Error('Transcript file exceeds the maximum 10MB limit.');
     }
     rawInput = fs.readFileSync(file, 'utf-8');
   } else if (options.stdin) {
@@ -45,6 +51,10 @@ export async function executeExtract(
 
   if (!rawInput || !rawInput.trim()) {
     throw new Error('Transcript input is empty.');
+  }
+
+  if (Buffer.byteLength(rawInput, 'utf-8') > MAX_TRANSCRIPT_BYTES) {
+    throw new Error('Transcript file exceeds the maximum 10MB limit.');
   }
 
   const { projectRoot, contextDir } = bootstrapPactx(cwd, { autoRecovery: true });

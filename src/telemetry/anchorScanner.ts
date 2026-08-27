@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { AnchorType, MicroAnchorEntry } from './types';
 import { sanitizeBodyField } from '../update/applier';
-import { getSessionsDir } from './sessionStore';
+import { ensureSessionsDir, getSessionsDir } from './sessionStore';
+
+export const MAX_ANCHOR_BYTES = 16 * 1024; // 16KB
 
 const HTML_COMMENT_REGEX = /<!--\s*pactx:v1\s+(dec|fact|rej|req|task)\s+([\s\S]*?)\s*-->/gi;
 const USER_DIRECTIVE_REGEX = /^\s*(?:\/remember|\/pin|@pactx)\s*(decision|dec|rejected|reject|rej|requirement|req|fact|task)?(?:\s*[:\-])?\s*(.+)$/gim;
@@ -69,13 +71,30 @@ export function parseMicroAnchors(text: string): MicroAnchorEntry[] {
 }
 
 export function appendSessionAnchor(contextDir: string, anchor: MicroAnchorEntry): void {
-  const sessionsDir = getSessionsDir(contextDir);
+  const sessionsDir = ensureSessionsDir(contextDir);
   const anchorsFile = path.join(sessionsDir, 'anchors.jsonl');
+
+  // Validação de limite de 16KB por âncora (P1-03)
+  const serialized = JSON.stringify(anchor);
+  if (Buffer.byteLength(serialized, 'utf-8') > MAX_ANCHOR_BYTES) {
+    let sanitizedPayload = anchor.payload;
+    if (typeof sanitizedPayload === 'string') {
+      sanitizedPayload = sanitizedPayload.substring(0, 1000) + '... [TRUNCATED_EXCEEDED_16KB]';
+    } else if (typeof sanitizedPayload === 'object' && sanitizedPayload !== null) {
+      sanitizedPayload = { ...sanitizedPayload, note: '[TRUNCATED_EXCEEDED_16KB]' };
+    }
+    anchor = {
+      ...anchor,
+      payload: sanitizedPayload,
+      rawText: typeof anchor.rawText === 'string' ? anchor.rawText.substring(0, 1000) : '',
+    };
+  }
+
   fs.appendFileSync(anchorsFile, JSON.stringify(anchor) + '\n', 'utf-8');
 }
 
 export function getSessionAnchors(contextDir: string): MicroAnchorEntry[] {
-  const anchorsFile = path.join(contextDir, '.pactx', 'sessions', 'anchors.jsonl');
+  const anchorsFile = path.join(getSessionsDir(contextDir), 'anchors.jsonl');
   if (!fs.existsSync(anchorsFile)) return [];
   try {
     const content = fs.readFileSync(anchorsFile, 'utf-8');
@@ -93,7 +112,7 @@ export function getSessionAnchors(contextDir: string): MicroAnchorEntry[] {
 }
 
 export function clearSessionAnchors(contextDir: string): void {
-  const anchorsFile = path.join(contextDir, '.pactx', 'sessions', 'anchors.jsonl');
+  const anchorsFile = path.join(getSessionsDir(contextDir), 'anchors.jsonl');
   if (fs.existsSync(anchorsFile)) {
     try {
       fs.unlinkSync(anchorsFile);

@@ -13,7 +13,11 @@ export interface ActiveSessionData {
 }
 
 export function getSessionsDir(contextDir: string): string {
-  const dir = path.join(contextDir, '.pactx', 'sessions');
+  return path.join(contextDir, '.pactx', 'sessions');
+}
+
+export function ensureSessionsDir(contextDir: string): string {
+  const dir = getSessionsDir(contextDir);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -26,7 +30,7 @@ export function startSession(
   packTokens: number,
   modelName?: string
 ): ActiveSessionData {
-  const sessionsDir = getSessionsDir(contextDir);
+  const sessionsDir = ensureSessionsDir(contextDir);
   const sessionFile = path.join(sessionsDir, 'current.json');
   const data: ActiveSessionData = {
     sessionId: crypto.randomUUID(),
@@ -41,7 +45,7 @@ export function startSession(
 }
 
 export function getActiveSession(contextDir: string): ActiveSessionData | null {
-  const sessionFile = path.join(contextDir, '.pactx', 'sessions', 'current.json');
+  const sessionFile = path.join(getSessionsDir(contextDir), 'current.json');
   if (!fs.existsSync(sessionFile)) return null;
   try {
     return JSON.parse(fs.readFileSync(sessionFile, 'utf-8'));
@@ -51,7 +55,7 @@ export function getActiveSession(contextDir: string): ActiveSessionData | null {
 }
 
 export function clearActiveSession(contextDir: string): void {
-  const sessionsDir = path.join(contextDir, '.pactx', 'sessions');
+  const sessionsDir = getSessionsDir(contextDir);
   const sessionFile = path.join(sessionsDir, 'current.json');
   const anchorsFile = path.join(sessionsDir, 'anchors.jsonl');
   if (fs.existsSync(sessionFile)) {
