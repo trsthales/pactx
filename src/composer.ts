@@ -3,9 +3,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { getGitState } from './git';
 import { findContextDir, findProjectRoot } from './utils/contextFinder';
+import { estimateTokens } from './telemetry/tokenEstimator';
+import { startSession } from './telemetry/sessionStore';
+import { clearSessionAnchors } from './telemetry/anchorScanner';
 
 export interface PackOptions {
     short?: boolean;
+    modelName?: string;
 }
 
 export function sanitizeInlineMarkdown(val: string): string {
@@ -63,7 +67,7 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
     const supersededDecisions: string[] = [];
 
     if (fs.existsSync(decisionsDir)) {
-        const files = (fs.readdirSync(decisionsDir) as string[]).filter(f => f.endsWith('.md'));
+        const files = (fs.readdirSync(decisionsDir) as string[]).filter(f => f.endsWith('.md')).sort();
         for (const f of files) {
             const content = fs.readFileSync(path.join(decisionsDir, f), 'utf-8').replace(/\r\n?/g, '\n').trim();
             const status = parseFrontmatterValue(content, 'status') || 'active';
@@ -126,6 +130,15 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
         out += `\n`;
     }
 
+    out += `### PROGRESSIVE IN-FLIGHT MICRO-ANCHORS & /remember DIRECTIVE:\n`;
+    out += `Whenever you make an architectural decision, discover a fact, establish a requirement, or reject a hypothesis during this session, emit a compact HTML comment anchor at the very end of your response (invisible in markdown UI):\n`;
+    out += `<!-- pactx:v1 dec {"title":"...", "satisfies":["REQ-xxx"]} -->\n`;
+    out += `<!-- pactx:v1 fact "runtime discovery here" -->\n`;
+    out += `<!-- pactx:v1 rej "hypothesis tested and discarded" -->\n`;
+    out += `<!-- pactx:v1 req {"title":"...", "type":"functional"} -->\n`;
+    out += `<!-- pactx:v1 task "actionable task description" -->\n\n`;
+    out += `If the user prefixes a message with "/remember", "/pin", or "@pactx" (e.g. "/remember reject: ...", "/remember decision: ..."), acknowledge it immediately and ensure it is preserved for session memory and final handoff.\n\n`;
+
     out += `### CANONICAL HANDOFF & SHUTDOWN PROTOCOL:\n`;
     out += `When completing a task, making decisions, or when the user requests "/handoff", emit the structured block below.\n`;
     out += `GUIDELINES: Record ONLY actual facts and decisions established in this session. NEVER invent decisions to fill the schema. If no decisions were made, use empty arrays ([]).\n\n`;
@@ -145,6 +158,12 @@ export function composeContext(cwd: string = process.cwd(), options: PackOptions
     out += `superseded_decisions: []\n`;
     out += `new_glossary_terms: []\n`;
     out += `\`\`\`\n`;
+
+    const packTokens = estimateTokens(out);
+    try {
+        clearSessionAnchors(contextDir);
+        startSession(contextDir, contextRevisionHash, packTokens, options.modelName);
+    } catch {}
 
     return out;
 }

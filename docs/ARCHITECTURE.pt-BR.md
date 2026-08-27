@@ -180,3 +180,33 @@ Executa 8 regras automatizadas de integridade: Frontmatters YAML, Security Jail,
 | **Motor Transacional** | Manifestos WAL em arquivo (`TX-*.json`) | Escrita direta no arquivo final | Fornece resiliência contra quedas abruptas (`SIGKILL`) ou falta de energia sem necessidade de daemon. |
 | **Controle de Concorrência** | File Locking (`wx`) + Hash OCC de 16 caracteres | Locks de Banco / Servidor Central | Opera localmente em qualquer terminal e sistema operacional sem necessidade de daemons ou rede. |
 | **Semântica de Mutação** | Merge Incremental de Patch | Sobrescrita Destrutiva de Snapshot | Impede que respostas parciais de IA apaguem inadvertidamente anotações, objetivos ou seções customizadas do desenvolvedor. |
+
+---
+
+## 6. A Arquitetura em 4 Camadas (v0.4.0)
+
+O PactX v0.4.0 organiza a continuidade de contexto em 4 camadas complementares:
+
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│                   PACTX CONTINUIDADE DE CONTEXTO v0.4.0                │
+│                                                                        │
+│  Camada 1: PASSIVA (Sempre Ativa)                                      │
+│  ├── Protocolo de Micro-Âncoras no prompt do Context Pack              │
+│  └── Estimador de Tokens Ponderado Local (Código /3, Prosa /4, +15%)   │
+│                                                                        │
+│  Camada 2: ATIVA (Orientada a Limiares)                                │
+│  ├── Motor de Saúde de Contexto & Zonas de Saturação (SAFE/WATCH/...)  │
+│  └── Dashboard Visual ANSI via pactx status --telemetry                │
+│                                                                        │
+│  Camada 3: EXTRAÇÃO (Out-of-Band)                                      │
+│  ├── pactx extract (Parsers Multi-Formato: Claude, ChatGPT, Cursor)   │
+│  └── Pipeline Híbrido: Baseline Determinístico + LLM Semântica         │
+│                                                                        │
+│  Camada 4: REALTIME (Agentes de IDE via MCP)                           │
+│  ├── Servidor stdio MCP (pactx serve --mcp)                            │
+│  ├── Resources: pactx://context, pactx://health, pactx://status        │
+│  └── Segurança por Proposta Desacoplada: pactx_propose_mutation        │
+└────────────────────────────────────────────────────────────────────────┘
+```
+

@@ -33,7 +33,7 @@ O `pactx` transforma seu repositório na **fonte canônica da verdade** e cria u
 │      + Estado do Git em Runtime (branch, commits recentes, diff)       │
 └──────────────────┬──────────────────────────────────▲──────────────────┘
                    │                                  │
-      1. npx @trsthales/pactx │        3. npx @trsthales/pactx │ update
+      1. npx @trsthales/pactx │        3. npx @trsthales/pactx update
          (Egresso) │                        (Ingresso)│ (Human-in-the-Loop)
                    ▼                                  │
     ┌──────────────────────────────┐   ┌──────────────┴──────────────────┐
@@ -41,14 +41,16 @@ O `pactx` transforma seu repositório na **fonte canônica da verdade** e cria u
     │     (Copiado p/ Clipboard)   │   │     (ADRs, Fatos, Hipóteses)    │
     └──────────────┬───────────────┘   └──────────────▲──────────────────┘
                    │                                  │
-                   ▼                                  │ 2. /handoff
+                   ▼                                  │ 2. /handoff ou extract
     ┌─────────────────────────────────────────────────┴──────────────────┐
-    │            QUALQUER IA (ChatGPT / Claude / Gemini / Cursor)        │
+    │       QUALQUER IA (ChatGPT / Claude / Gemini / Cursor / MCP)       │
     └────────────────────────────────────────────────────────────────────┘
 ```
 
 1. **Egresso (`pactx` / `pack`):** Inspeciona especificações do projeto, ADRs ativas e o delta do Git para gerar um pacote Markdown limpo e com consumo mínimo de tokens.
-2. **Ingresso (`pactx update`):** Ingere o bloco estruturado de handoff da IA, valida schema e regras de segurança, exibe revisão completa e persiste decisões, fatos e tarefas de forma atômica em `.ai-context/`.
+2. **Micro-Âncoras & Telemetria em Tempo Real:** Captura passiva de âncoras (`<!-- pactx:v1 ... -->`) e diretivas do desenvolvedor (`/remember`) durante a conversa.
+3. **Ingresso (`pactx update` ou `pactx extract`):** Ingere blocos estruturados de handoff ou extrai diretamente de transcripts de chat, com validação Zero-Trust e transações atômicas WAL.
+4. **Servidor MCP Nativo (`pactx serve --mcp`):** Servidor Model Context Protocol nativo para agentes em IDEs (Cursor, Claude Desktop, Windsurf).
 
 ---
 
@@ -94,85 +96,102 @@ Copie a resposta da IA e execute no seu terminal:
 npx @trsthales/pactx update
 ```
 
-Interface Interativa de Revisão:
-```text
-📦 pactx-update block detected!
+---
 
-Canonical Mutation Plan:
-────────────────────────────────────────────────────────────────────────────
-📝 .ai-context/state.md
-   • Active Task: "TASK-05 Login de Alunos via PIN" [IN_PROGRESS]
-   • Next Action: "Implementar validação do StudentPIN no authController"
-   • [+] Fact: "Rate limit de login por PIN deve ser restrito a 5 tentativas por minuto"
-   • [+] Discarded Hypothesis: "O login de alunos NÃO deve exigir e-mail ou senha"
-📋 .ai-context/requirements.md [CREATE]
-   • [REQ-002] "Student PIN Security Policy" (functional)
-     Statement: "Alunos devem se autenticar através de PIN de 4 dígitos com rate limit restrito."
-🏛️  .ai-context/decisions/DEC-002.md [CREATE]
-   • Title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
-   • Satisfies: REQ-002
-   • Decision: "Utilizar combinação de Turma + PIN com hash seguro no PostgreSQL"
-📖 .ai-context/glossary.md [APPEND]
-   • StudentPIN: "Código numérico de 4 dígitos atribuído ao aluno"
-────────────────────────────────────────────────────────────────────────────
+## 🤖 Integração com Model Context Protocol (MCP) (v0.4.0)
 
-? Apply canonical changes to repository? (Y/n) y
+O `pactx` fornece um **Servidor MCP nativo** sobre `stdio` para memória em tempo real em IDEs como **Cursor**, **Claude Desktop** e **Windsurf**.
 
-✔ Canonical state updated successfully!
-📋 Audit ledger recorded in .ai-context/.pactx/ledger.json
+### Configuração no Cursor (`.cursor/mcp.json` ou Configurações Globais)
+
+Adicione ao arquivo `.cursor/mcp.json` na raiz do seu projeto ou em `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "pactx": {
+      "command": "npx",
+      "args": ["-y", "@trsthales/pactx@latest", "serve", "--mcp"]
+    }
+  }
+}
+```
+
+### Configuração no Claude Desktop (`claude_desktop_config.json`)
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "pactx": {
+      "command": "npx",
+      "args": ["-y", "@trsthales/pactx@latest", "serve", "--mcp"]
+    }
+  }
+}
+```
+
+### Resources & Tools MCP Disponíveis
+
+| Tipo | Identificador | Descrição |
+|---|---|---|
+| **Resource** | `pactx://context` | Context Pack canônico atualizado em Markdown |
+| **Resource** | `pactx://health` | Relatório de saturação de contexto e risco de amnésia em JSON |
+| **Resource** | `pactx://status` | Métricas cognitivas completas do repositório em JSON |
+| **Tool** | `pactx_record_anchor` | Grava micro-âncoras de decisão/fato/rejeição em tempo real |
+| **Tool** | `pactx_get_context_health` | Retorna saúde da janela de contexto e recomendações de handoff |
+| **Tool** | `pactx_propose_mutation` | Propõe um plano de mutação e gera um `proposalId` para revisão humana |
+| **Tool** | `pactx_apply_mutation` | Aplica atomicamente uma proposta aprovada ao estado do repositório |
+
+---
+
+## 🔍 Extrator de Transcripts Out-of-Band (`pactx extract`)
+
+Resumos de `/handoff` no final de conversas longas são vulneráveis à fadiga da atenção da IA. O `pactx extract` extrai o estado diretamente do arquivo de transcript bruto:
+
+```bash
+# Extração determinística offline (zero custo de tokens / sem API key)
+npx @trsthales/pactx extract chat_export.json -y
+
+# Extração semântica com Evidence Spans usando Gemini, Claude, OpenAI ou Ollama local
+npx @trsthales/pactx extract transcript.jsonl --model gemini-2.5-flash --api-key $GEMINI_API_KEY
+npx @trsthales/pactx extract cursor_log.json --model claude-3-5-haiku
+npx @trsthales/pactx extract session.txt --model qwen2.5-coder # Ollama local
+
+# Inspeciona sem modificar arquivos no disco
+npx @trsthales/pactx extract chat.json --dry-run
 ```
 
 ---
 
-## O Schema do Bloco `pactx-update` (v1.1)
+## 📊 Telemetria de Saúde de Contexto (`pactx status --telemetry`)
 
-As IAs emitem o bloco de atualização encapsulado na cerca de código `pactx-update`:
+Monitore o consumo da janela de contexto e as zonas de risco operacional antes que a amnésia aconteça:
 
-````yaml
-```pactx-update
-version: "1.1"
-base_revision: "2a0de5fa8c9b10e4"
-
-source:
-  type: "conversation" # conversation | agent | manual | document
-  model: "Gemini 1.5 Pro"
-  session_topic: "Implementação da autenticação por PIN"
-
-state:
-  active_task: "TASK-05 Login de Alunos via PIN"
-  status: "IN_PROGRESS" # IN_PROGRESS | BLOCKED | COMPLETED
-  recommended_model: "Medium" # Medium | High
-  completed_items:
-    - "Definição do fluxo de autenticação por PIN"
-  new_facts:
-    - "Rate limit de login por PIN restrito a 5 tentativas por minuto"
-  rejected_hypotheses:
-    - "O login de alunos NÃO deve exigir e-mail ou senha alfanumérica"
-  next_action: "Implementar validação no controller e aplicar rate limit"
-
-new_requirements:
-  - id: "auto" # gera automaticamente REQ-002
-    type: "functional" # functional | security | performance | compliance
-    title: "Student PIN Security Policy"
-    statement: "Alunos devem se autenticar através de PIN de 4 dígitos com rate limit restrito."
-
-new_decisions:
-  - id: "auto" # O pactx calcula automaticamente a próxima sequência (DEC-002)
-    title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
-    reason: "Alunos do ensino fundamental possuem fricção com senhas complexas"
-    decision: "Utilizar Turma + PIN de 4 dígitos com hash seguro"
-    satisfies: ["REQ-002"]
-
-superseded_decisions:
-  - id: "DEC-001"
-    by: "auto" # ou ID específico
-    reason: "Substituída pelo novo modelo de multi-tenancy"
-
-new_glossary_terms:
-  - term: "StudentPIN"
-    definition: "Código numérico de 4 dígitos atribuído ao aluno"
+```bash
+npx @trsthales/pactx status --telemetry
 ```
-````
+
+```text
+╔══════════════════════════════════════════════════════════════════════╗
+║              pactx Context Health Dashboard v0.4.0                  ║
+╠══════════════════════════════════════════════════════════════════════╣
+║ Session: session_2026-08-27_a3f2d1   Model: claude-3-5-sonnet       ║
+║ Turns: 24                            Anchors Logged: 5 captured      ║
+╠══════════════════════════════════════════════════════════════════════╣
+║ CONTEXT CONSUMPTION                                                  ║
+║   Total Estimated:        28,252 tokens   [ 14%]                    ║
+║   Safe Zone (70%):       140,000 tokens                             ║
+║                                                                     ║
+║   [████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 14%          ║
+║    ← SAFE                    CAUTION  WARNING   CRIT →              ║
+╠══════════════════════════════════════════════════════════════════════╣
+║ CONTEXT HEALTH: 86/100 🟢 SAFE                                       ║
+╚══════════════════════════════════════════════════════════════════════╝
+```
 
 ---
 
@@ -181,71 +200,70 @@ new_glossary_terms:
 ### Comandos Principais
 | Comando / Flag | Descrição |
 |---|---|
-| `pactx` / `pactx pack` | Lê o estado do repositório, copia o pacote de contexto para o clipboard e exibe estatísticas |
-| `pactx init` | Cria a estrutura de diretórios `.ai-context/` com templates iniciais |
-| `pactx status` | Exibe o dashboard visual executivo da memória cognitiva e estado do git |
-| `pactx status --json` | Emite o status completo estruturado em formato JSON para automações |
-| `pactx diff` | Inspeciona e exibe o plano de mutação colorido sem gravar arquivos no disco |
-| `pactx diff --file <path>` | Inspeciona plano de mutação a partir de um arquivo específico |
-| `pactx diff --stdin` | Inspeciona plano de mutação recebido via pipe |
-| `pactx rollback [hash]` | Reversão Graph-Safe & WAL-Protected da transação mais recente (LIFO) ou hash específico |
-| `pactx rollback --force-cascade` | Reverte automaticamente em cascata todas as transações dependentes posteriores |
-| `pactx doctor` | Valida a saúde e integridade do repositório contra 8 regras fundamentais |
-| `pactx doctor --fix` | Repara automaticamente locks abandonados, limpa temporários e poda registros antigos |
+| `pactx` / `pactx pack` | Lê o estado do repositório, copia context pack para o clipboard e inicia sessão efêmera |
+| `pactx init` | Cria a estrutura inicial do `.ai-context/` com templates |
+| `pactx status` | Exibe o dashboard cognitivo executivo e o estado em runtime do Git |
+| `pactx status --telemetry` | Exibe saúde do contexto, barra de saturação e métricas de micro-âncoras |
+| `pactx status --json` | Emite métricas estruturadas completas em JSON |
+| `pactx diff` | Inspeciona e exibe o plano de mutação colorido sem modificar o disco |
+| `pactx rollback [hash]` | Rollback seguro por grafo protegido por WAL (LIFO ou hash específico) |
+| `pactx doctor` | Valida a saúde do repositório contra 8 regras de integridade (`--fix` para auto-reparo) |
+| `pactx serve --mcp` | Inicia o servidor MCP nativo sobre stdio para Cursor e Claude Desktop |
 
-### Comandos de Ingestão (`pactx update`)
+### Comandos de Ingresso e Extração
 | Comando / Flag | Descrição |
 |---|---|
-| `pactx update` | Lê o clipboard, valida o payload, exibe o plano em texto integral e solicita confirmação |
-| `pactx update -y`, `--yes` | Aplica as alterações sem confirmação interativa (mantém todas as validações de segurança e integridade) |
-| `pactx update --dry-run` | Simula e exibe o plano de mutação completo sem gravar arquivos no disco |
-| `pactx update --file <path>` | Lê o bloco `pactx-update` a partir de um arquivo markdown ou log |
-| `pactx update --stdin` | Lê o bloco via pipe (`cat response.md \| pactx update --stdin`) |
-| `pactx update --force` | Força a aplicação mesmo na presença de avisos críticos (como Stale Context com `-y`) |
+| `pactx update` | Lê o clipboard, valida payload, exibe plano em texto integral e solicita confirmação |
+| `pactx update --proposal <id>` | Inspeciona e aplica proposta desacoplada gerada pelo servidor MCP |
+| `pactx update -y`, `--yes` | Aplica mudanças sem confirmação interativa (mantém todas as validações de segurança) |
+| `pactx update --dry-run` | Simula e exibe o plano completo de mutação sem modificar arquivos no disco |
+| `pactx extract [file]` | Extrai decisões, fatos e hipóteses descartadas de transcripts de chat |
+| `pactx extract --stdin` | Extrai de dados enviados via pipe (`cat chat.json \| pactx extract --stdin`) |
+| `pactx extract --model <name>` | Extração semântica com LLM (Gemini, Claude, OpenAI, Ollama) com Evidence Spans |
 
 ---
 
-## Segurança de Nível Industrial & Arquitetura Zero-Trust
+## Segurança Enterprise & Arquitetura Zero-Trust
 
-O `pactx update` trata todas as saídas de IA como **entradas não confiáveis**:
+O `pactx update` trata saídas de IA como **entradas não confiáveis (untrusted candidate input)**:
 
-1. **Write-Ahead Logging (WAL):** Mutações de múltiplos arquivos são orquestradas via manifestos WAL atômicos (`PREPARED` -> `APPLYING` -> `COMMITTED` / `ROLLED_BACK`). Quedas de processo disparam auto-recovery transparente no boot.
-2. **Jail de Diretórios & Anti-Path Traversal:** Identificadores de ADR e Requisitos são restritos à regex `/^(auto\|DEC-(?!0+$)\d{3,4}\|REQ-(?!0+$)\d{3,4})$/i`. Escritas são presas dentro de `.ai-context/` com validação de `realpath`.
-3. **Serialização Segura via AST:** Nenhuma interpolação ingênua de strings em YAML. Todos os frontmatters são gerados através de dumpers formais de YAML para prevenir injeção estrutural.
-4. **Reversão Graph-Safe:** O rollback analisa vínculos dependentes (`satisfies`, `superseded_by`) e impede estados corrompidos ou inconsistentes.
-5. **Idempotência Canônica:** Payloads são normalizados e registrados com hash SHA-256 no arquivo `.ai-context/.pactx/ledger.json`. Executar o mesmo clipboard novamente resulta em No-Op seguro.
-6. **Revisão Humana Anti-Envenenamento:** O terminal exibe o texto literal e completo de cada decisão, requisito, fato e hipótese antes de solicitar a confirmação do desenvolvedor.
-7. **File Locking Concorrente:** Proteção contra escritas simultâneas em múltiplos terminais via `.pactx.lock` exclusivo e tratamento de sinais (`SIGINT`, `SIGTERM`, `SIGHUP`).
+1. **Write-Ahead Logging (WAL):** Gravações em múltiplos arquivos são orquestradas via manifestos WAL atômicos (`PREPARED` -> `APPLYING` -> `COMMITTED` / `ROLLED_BACK`). Falhas disparam auto-recuperação transparente no boot.
+2. **Isolamento de Caminho (Path Traversal Jail):** Identificadores de ADR e Requisitos são rigorosamente validados contra `/^(auto\|DEC-\d{3,4}\|REQ-\d{3,4})$/i`.
+3. **Serialização Segura de AST:** Zero interpolação ingênua de strings em YAML. Todo frontmatter é gerado via dumpers formais.
+4. **Rollback Seguro por Grafo de Dependências:** Análise de links downstream (`satisfies`, `superseded_by`) para prevenir estados inconsistentes.
+5. **Idempotência Canônica:** Payloads são hasheados com SHA-256 no ledger `.ai-context/.pactx/ledger.json`. Reaplicar o mesmo conteúdo resulta em No-Op seguro.
+6. **Revisão Humana Anti-Envenenamento:** O terminal renderiza o texto integral de cada decisão, requisito, fato e hipótese antes da confirmação humana.
 
 ---
 
-## Especificação dos Arquivos (`.ai-context/`)
+## Especificação de Diretórios (`.ai-context/`)
 
 ```text
 .ai-context/
-├── project.md            # Visão, stack tecnológica e regras invioláveis
+├── project.md            # Visão, stack tecnológico e regras invariantes
 ├── requirements.md       # Requisitos canônicos & regras de negócio (REQ-001)
 ├── state.md              # Tarefa ativa, itens concluídos, fatos e hipóteses descartadas
 ├── glossary.md           # Termos de domínio, contratos de API e entidades
 ├── decisions/
-│   ├── DEC-001.md        # ADRs ativas ou obsoletas com linhagem estrutural & vínculos satisfies
+│   ├── DEC-001.md        # ADRs ativas ou substituídas com histórico estruturado
 │   └── DEC-002.md
 └── .pactx/
     ├── ledger.json       # Ledger de auditoria com hashes SHA-256 aplicados
-    ├── .pactx.lock       # Lockfile de concorrência atômica
-    └── transactions/     # Manifestos do Write-Ahead Log (WAL) (TX-<hash>.json)
+    ├── .pactx.lock       # Lockfile atômico de concorrência
+    ├── transactions/     # Manifestos de Write-Ahead Log (WAL) (TX-<hash>.json)
+    └── sessions/         # Telemetria efêmera, micro-âncoras e propostas (gitignored)
 ```
 
 ---
 
 ## Documentação
 
-- ⚡ **[Catálogo Completo de Funcionalidades](./docs/FEATURES.pt-BR.md)** — Guia exaustivo cobrindo todos os comandos da CLI, motor WAL e modelo de segurança.
-- 📖 **[Tutorial Passo a Passo](./docs/TUTORIAL.pt-BR.md)** — Guia prático sobre como integrar e usar o `pactx` no seu fluxo diário.
-- 🏛️ **[Especificação Técnica & Arquitetura](./docs/ARCHITECTURE.pt-BR.md)** — Detalhamento técnico sobre o motor de loop fechado, modelo de segurança e garantias transacionais.
+- ⚡ **[Catálogo Completo de Recursos](./docs/FEATURES.pt-BR.md)** — Guia exaustivo de comandos, engine WAL e modelos de segurança.
+- 📖 **[Tutorial Passo a Passo](./docs/TUTORIAL.pt-BR.md)** — Guia prático de como integrar e usar o `pactx` no dia a dia.
+- 🏛️ **[Especificação Técnica & Arquitetura](./docs/ARCHITECTURE.pt-BR.md)** — Mergulho profundo no motor de loop fechado e garantias transacionais.
 
 ---
 
 ## Licença
 
-Distribuído sob a licença **MIT**. Consulte o arquivo [`LICENSE`](./LICENSE) para obter mais informações.
+Distribuído sob a licença **MIT**. Consulte [`LICENSE`](./LICENSE) para obter mais informações.

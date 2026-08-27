@@ -1,4 +1,3 @@
-```markdown
 # RFC-003: Session Intelligence, Context Telemetry, In-Flight Micro-Anchors & Out-of-Band Extraction
 
 * **RFC Number:** 003
@@ -256,4 +255,3 @@ O servidor MCP opera sobre `stdio`, projetado para ser configurado persistenteme
   - `micro-anchors`: âncoras válidas em JSON, JSON malformado, injeções em âncoras.
   - `MCP`: chamadas de tool válidas, payloads inválidos, concorrência.
 - [ ] Documentação (`README.md`, `README.pt-BR.md`, `TUTORIAL.md`, `ARCHITECTURE.md`, `FEATURES.md`) sincronizada em Inglês e Português.
-```

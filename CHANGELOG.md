@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-08-27
+
+### Added
+- Native Model Context Protocol (MCP) server via `pactx serve --mcp` over stdio.
+- MCP Resources: `pactx://context`, `pactx://health`, and `pactx://status`.
+- MCP Tools: `pactx_record_anchor`, `pactx_get_context_health`, `pactx_propose_mutation`, and `pactx_apply_mutation`.
+- Decoupled proposal approval flow via `proposalId` and CLI command `pactx update --proposal <id>`.
+- Out-of-Band Transcript Extractor via `pactx extract [file]` with support for Claude, ChatGPT, Cursor, and raw formats.
+- Hybrid extraction pipeline: deterministic pre-extraction (zero cost/offline) + optional semantic LLM extraction with Evidence Spans (`evidence: { turn, quote }`).
+- Weighted token estimator (code /3, prose /4, +15% safety margin) with zero heavy dependencies.
+- Context health telemetry dashboard via `pactx status --telemetry` with ANSI saturation bar and `--json` support.
+- In-flight micro-anchors protocol (`<!-- pactx:v1 ... -->`) and `/remember` developer directives.
+- Ephemeral session store in `.ai-context/.pactx/sessions/` (protected in `.gitignore`).
+
 ## [0.3.2] - 2026-08-26
 
 ### Security & Hardening

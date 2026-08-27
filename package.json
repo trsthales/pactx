@@ -1,6 +1,6 @@
 {
   "name": "@trsthales/pactx",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Universal context continuity & handoff engine for AI-assisted development",
   "bin": {
     "pactx": "./dist/cli.js"
@@ -46,6 +46,7 @@
   },
   "type": "commonjs",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "clipboardy": "^5.3.2",
     "commander": "^15.0.0",
     "picocolors": "^1.1.1",
