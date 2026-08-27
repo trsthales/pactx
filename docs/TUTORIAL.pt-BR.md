@@ -321,3 +321,58 @@ Para validar o plano de mutação sem alterar nenhum arquivo:
 ```bash
 npx @trsthales/pactx update --dry-run
 ```
+
+---
+
+## Passo 7: Integração com IDEs em Tempo Real via Servidor MCP (v0.4.0)
+
+Para automação total de memória sem clipboard no **Cursor**, **Claude Desktop** e **Windsurf**, configure o Servidor MCP nativo do `pactx`.
+
+### 1. Configuração no Cursor
+Adicione ao arquivo `.cursor/mcp.json` na raiz do seu projeto ou em `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "pactx": {
+      "command": "npx",
+      "args": ["-y", "@trsthales/pactx@latest", "serve", "--mcp"]
+    }
+  }
+}
+```
+
+O Cursor Agent poderá ler o `pactx://context`, registrar micro-âncoras em tempo real (`pactx_record_anchor`) e propor atualizações (`pactx_propose_mutation`).
+
+### 2. Revisão e Aplicação de Propostas
+Quando o agente gerar uma proposta, revise e aplique pelo terminal com:
+```bash
+npx @trsthales/pactx update --proposal PROP-A1B2C3D4
+```
+
+---
+
+## Passo 8: Extração de Transcripts Out-of-Band (`pactx extract`)
+
+Se você teve uma conversa longa (30+ turnos) e quer evitar resumos com amnésia, exporte o transcript em JSON/JSONL e execute:
+
+```bash
+# Extração determinística offline (rápida, zero tokens)
+npx @trsthales/pactx extract conversa.json -y
+
+# Extração semântica com Evidence Spans
+npx @trsthales/pactx extract transcript.json --model gemini-2.5-flash --api-key $GEMINI_API_KEY
+```
+
+---
+
+## Passo 9: Diretivas `/remember` e Micro-Âncoras na Conversa
+
+Durante conversas com a IA, ancore decisões ou rejeite hipóteses inline:
+
+- `"/remember reject: Não usar autenticação por email para alunos menores de 12 anos"`
+- `"/remember decision: Usar PBKDF2 para hash de PIN"`
+- `"/remember fact: O rate limit do PostgreSQL é de 5 req/min por aluno"`
+
+A IA emitirá micro-âncoras compactas (`<!-- pactx:v1 dec ... -->`), capturadas automaticamente pelo `pactx extract` e pelo dashboard `pactx status --telemetry`.
+

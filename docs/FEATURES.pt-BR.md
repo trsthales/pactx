@@ -428,7 +428,32 @@ new_glossary_terms:
 
 ---
 
+## 7. Model Context Protocol (MCP) & Memória em Tempo Real (v0.4.0)
+
+O PactX v0.4.0 inclui um servidor **Model Context Protocol (MCP)** nativo para memória em tempo real em IDEs sem necessidade de copiar/colar:
+
+- **Comando:** `pactx serve --mcp` (transporte stdio).
+- **Resources:**
+  - `pactx://context`: Context Pack atualizado em Markdown.
+  - `pactx://health`: Relatório JSON de saturação e saúde da janela de contexto.
+  - `pactx://status`: Métricas cognitivas completas do repositório em JSON.
+- **Tools:**
+  - `pactx_record_anchor`: Gravação de âncoras de decisão/fato/rejeição em tempo real.
+  - `pactx_get_context_health`: Avaliação do consumo de tokens e gatilhos de handoff.
+  - `pactx_propose_mutation`: Criação desacoplada de proposta retornando `proposalId`.
+  - `pactx_apply_mutation`: Aplicação transacional atômica sob `ContextLock`.
+
+---
+
+## 8. Extrator de Transcripts Out-of-Band (`pactx extract`)
+
+- **Extração Determinística Local:** Extrai micro-âncoras (`<!-- pactx:v1 ... -->`), diretivas `/remember` e anotações de código (`// DECISION:`, `// REJECTED:`) 100% offline e com zero consumo de tokens.
+- **Extração Semântica com LLM:** Extração avançada com Evidence Spans (`evidence: { turn, quote }`) utilizando Google Gemini, Anthropic Claude, OpenAI ou Ollama local sem SDKs externos pesados.
+
+---
+
 <p align="center">
   <b>PactX 📦 — Motor Universal de Continuidade de Contexto</b><br>
   Desenvolvido com rigor arquitetural zero-trust para engenharia de software de missão crítica.
 </p>
+

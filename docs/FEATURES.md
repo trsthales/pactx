@@ -428,7 +428,32 @@ new_glossary_terms:
 
 ---
 
+## 7. Model Context Protocol (MCP) & Real-Time Engine (v0.4.0)
+
+PactX v0.4.0 includes a native **Model Context Protocol (MCP)** server for real-time IDE memory without copy-paste:
+
+- **Command:** `pactx serve --mcp` (stdio transport).
+- **Resources:**
+  - `pactx://context`: Markdown context pack.
+  - `pactx://health`: JSON context health and saturation report.
+  - `pactx://status`: JSON repository cognitive metrics.
+- **Tools:**
+  - `pactx_record_anchor`: Real-time decision/fact/rejection recording.
+  - `pactx_get_context_health`: Real-time token usage evaluation & handoff triggers.
+  - `pactx_propose_mutation`: Decoupled proposal creation returning `proposalId`.
+  - `pactx_apply_mutation`: Transactional commit under `ContextLock`.
+
+---
+
+## 8. Out-of-Band Transcript Extractor (`pactx extract`)
+
+- **Deterministic Local Extraction:** Extracts micro-anchors (`<!-- pactx:v1 ... -->`), `/remember` directives, and code annotations (`// DECISION:`, `// REJECTED:`) 100% offline at zero token cost.
+- **Semantic LLM Extraction:** Optional AI extraction with Evidence Spans (`evidence: { turn, quote }`) using Google Gemini, Anthropic Claude, OpenAI, or local Ollama without heavy external SDKs.
+
+---
+
 <p align="center">
   <b>PactX 📦 — Universal Context Continuity Engine</b><br>
   Developed with zero-trust architectural rigor for mission-critical software engineering.
 </p>
+

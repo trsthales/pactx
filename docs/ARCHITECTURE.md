@@ -180,3 +180,33 @@ Runs 8 automated integrity rules: YAML Frontmatters, Security Jail, ADR Lineage,
 | **Transactional Engine** | File-based WAL Manifests (`TX-*.json`) | Direct in-place writes | Provides crash recovery resilience against SIGKILL and power failure without a daemon. |
 | **Concurrency Control** | File Locking (`wx`) + 16-char OCC Hash | Database locks / Central Server | Works locally in any terminal without requiring daemons or network connectivity. |
 | **Mutation Semantics** | Incremental Patch Merging | Destructive Snapshot Overwriting | Prevents partial AI updates from accidentally erasing user-authored notes, objectives, or custom sections. |
+
+---
+
+## 6. The 4-Layer Architecture (v0.4.0)
+
+PactX v0.4.0 organizes context continuity across 4 complementary layers:
+
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│                    PACTX CONTEXT CONTINUITY v0.4.0                     │
+│                                                                        │
+│  Layer 1: PASSIVE (Always Active)                                      │
+│  ├── In-Flight Micro-Anchors Protocol in Context Pack Prompt           │
+│  └── Weighted Local Token Estimator (Code /3, Prose /4, +15% Margin)   │
+│                                                                        │
+│  Layer 2: ACTIVE (Threshold-Driven)                                    │
+│  ├── Context Health Engine & Saturation Zones (SAFE/WATCH/CAUTION/...) │
+│  └── pactx status --telemetry Visual ANSI Dashboard                    │
+│                                                                        │
+│  Layer 3: EXTRACTION (Out-of-Band)                                     │
+│  ├── pactx extract (Multi-Format Parsers: Claude, ChatGPT, Cursor)     │
+│  └── Hybrid Pipeline: Deterministic Local Baseline + Semantic LLM      │
+│                                                                        │
+│  Layer 4: REALTIME (IDE Agents via MCP)                                │
+│  ├── stdio MCP Server (pactx serve --mcp)                              │
+│  ├── Resources: pactx://context, pactx://health, pactx://status        │
+│  └── Decoupled Proposal Security: pactx_propose_mutation (PROP-<hash>) │
+└────────────────────────────────────────────────────────────────────────┘
+```
+

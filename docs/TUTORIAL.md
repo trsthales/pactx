@@ -321,3 +321,58 @@ To simulate changes without writing to disk:
 ```bash
 npx @trsthales/pactx update --dry-run
 ```
+
+---
+
+## Step 7: Real-Time IDE Integration via MCP Server (v0.4.0)
+
+For automated, zero-clipboard memory inside **Cursor**, **Claude Desktop**, and **Windsurf**, configure the native `pactx` MCP server.
+
+### 1. Cursor Configuration
+Add to `.cursor/mcp.json` in your repository or `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "pactx": {
+      "command": "npx",
+      "args": ["-y", "@trsthales/pactx@latest", "serve", "--mcp"]
+    }
+  }
+}
+```
+
+Now, Cursor Agent can read `pactx://context`, record anchors in real time (`pactx_record_anchor`), and propose updates (`pactx_propose_mutation`).
+
+### 2. Reviewing and Applying Proposals
+When an agent creates a proposal, apply it from your terminal with:
+```bash
+npx @trsthales/pactx update --proposal PROP-A1B2C3D4
+```
+
+---
+
+## Step 8: Out-of-Band Transcript Extraction (`pactx extract`)
+
+If you had a long conversation (30+ turns) and don't want to rely on late-session AI summaries, export the chat as JSON/JSONL and run:
+
+```bash
+# Offline deterministic extraction (fast, zero tokens)
+npx @trsthales/pactx extract conversation.json -y
+
+# Semantic extraction with Evidence Spans
+npx @trsthales/pactx extract transcript.json --model gemini-2.5-flash --api-key $GEMINI_API_KEY
+```
+
+---
+
+## Step 9: Using `/remember` Directives & In-Flight Anchors
+
+During any conversation with an AI, you can explicitly anchor decisions or reject ideas inline:
+
+- `"/remember reject: Do not use JWT for student sessions due to complexity"`
+- `"/remember decision: Use PBKDF2 for PIN hashing"`
+- `"/remember fact: PostgreSQL rate limit is 5 req/min per user"`
+
+The AI will output micro-anchors (`<!-- pactx:v1 dec ... -->`), which are captured automatically by `pactx extract` and `pactx status --telemetry`.
+

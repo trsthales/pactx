@@ -1,4 +1,3 @@
-
 <p align="center">
   <img src="img/logo.png" alt="pactx banner" width="450">
 </p>
@@ -34,7 +33,7 @@ Long chat sessions suffer from context window degradation, hallucinations, and l
 │      + Git Runtime State (branch, recent commits, modified files)      │
 └──────────────────┬──────────────────────────────────▲──────────────────┘
                    │                                  │
-      1. npx @trsthales/pactx │        3. npx @trsthales/pactx │ update
+      1. npx @trsthales/pactx │        3. npx @trsthales/pactx update
          (Egress)  │                        (Ingress) │ (Human-in-the-Loop)
                    ▼                                  │
     ┌──────────────────────────────┐   ┌──────────────┴──────────────────┐
@@ -42,14 +41,16 @@ Long chat sessions suffer from context window degradation, hallucinations, and l
     │     (Copied to Clipboard)    │   │     (ADRs, Facts, Hypotheses)   │
     └──────────────┬───────────────┘   └──────────────▲──────────────────┘
                    │                                  │
-                   ▼                                  │ 2. /handoff
+                   ▼                                  │ 2. /handoff or extract
     ┌─────────────────────────────────────────────────┴──────────────────┐
-    │               ANY AI (ChatGPT / Claude / Gemini / Cursor)          │
+    │          ANY AI (ChatGPT / Claude / Gemini / Cursor / MCP)         │
     └────────────────────────────────────────────────────────────────────┘
 ```
 
 1. **Egress (`pactx` / `pack`):** Inspects project specs, active ADRs, and Git delta to generate a clean, token-efficient Markdown context pack.
-2. **Ingress (`pactx update`):** Ingests the AI's structured handoff block, validates schema and security rules, presents a full-text review, and atomically persists decisions, facts, and tasks directly into `.ai-context/`.
+2. **In-Flight Anchors & Telemetry:** Passively captures micro-anchors (`<!-- pactx:v1 ... -->`) and developer directives (`/remember`) during the chat.
+3. **Ingress (`pactx update` or `pactx extract`):** Ingests structured handoffs or extracts directly from chat transcripts, validating schema and Zero-Trust security rules with atomic WAL transactions.
+4. **Realtime MCP Server (`pactx serve --mcp`):** Native Model Context Protocol server for IDE agents (Cursor, Claude Desktop, Windsurf).
 
 ---
 
@@ -95,85 +96,102 @@ Copy the AI's response and run in your terminal:
 npx @trsthales/pactx update
 ```
 
-Interactive Review UI:
-```text
-📦 pactx-update block detected!
+---
 
-Canonical Mutation Plan:
-────────────────────────────────────────────────────────────────────────────
-📝 .ai-context/state.md
-   • Active Task: "TASK-05 Login de Alunos via PIN" [IN_PROGRESS]
-   • Next Action: "Implementar validação do StudentPIN no authController"
-   • [+] Fact: "Rate limit de login por PIN deve ser restrito a 5 tentativas por minuto"
-   • [+] Discarded Hypothesis: "O login de alunos NÃO deve exigir e-mail ou senha"
-📋 .ai-context/requirements.md [CREATE]
-   • [REQ-002] "Student PIN Security Policy" (functional)
-     Statement: "Alunos devem se autenticar através de PIN de 4 dígitos com rate limit restrito."
-🏛️  .ai-context/decisions/DEC-002.md [CREATE]
-   • Title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
-   • Satisfies: REQ-002
-   • Decision: "Utilizar combinação de Turma + PIN com hash seguro no PostgreSQL"
-📖 .ai-context/glossary.md [APPEND]
-   • StudentPIN: "Código numérico de 4 dígitos atribuído ao aluno"
-────────────────────────────────────────────────────────────────────────────
+## 🤖 Model Context Protocol (MCP) Integration (v0.4.0)
 
-? Apply canonical changes to repository? (Y/n) y
+`pactx` provides a native **MCP Server** over `stdio` for real-time agent memory in IDEs like **Cursor**, **Claude Desktop**, and **Windsurf**.
 
-✔ Canonical state updated successfully!
-📋 Audit ledger recorded in .ai-context/.pactx/ledger.json
+### Cursor Setup (`.cursor/mcp.json` or Global Cursor Settings)
+
+Add to `.cursor/mcp.json` in your project root or `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "pactx": {
+      "command": "npx",
+      "args": ["-y", "@trsthales/pactx@latest", "serve", "--mcp"]
+    }
+  }
+}
+```
+
+### Claude Desktop Setup (`claude_desktop_config.json`)
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "pactx": {
+      "command": "npx",
+      "args": ["-y", "@trsthales/pactx@latest", "serve", "--mcp"]
+    }
+  }
+}
+```
+
+### Available MCP Resources & Tools
+
+| Type | Identifier | Description |
+|---|---|---|
+| **Resource** | `pactx://context` | Current canonical Context Pack in Markdown |
+| **Resource** | `pactx://health` | Real-time context saturation & amnesia risk report in JSON |
+| **Resource** | `pactx://status` | Full cognitive memory repository metrics in JSON |
+| **Tool** | `pactx_record_anchor` | Records in-flight decision/fact/rejection anchors in real time |
+| **Tool** | `pactx_get_context_health` | Returns context window health and handoff recommendations |
+| **Tool** | `pactx_propose_mutation` | Proposes a mutation plan and returns a `proposalId` for human review |
+| **Tool** | `pactx_apply_mutation` | Atomically commits an approved proposal to repository state |
+
+---
+
+## 🔍 Out-of-Band Transcript Extractor (`pactx extract`)
+
+Late-session handoff summaries are vulnerable to model fatigue. `pactx extract` bypasses tired in-chat generation by extracting state directly from raw transcripts:
+
+```bash
+# Offline deterministic extraction (zero API key / zero token cost)
+npx @trsthales/pactx extract chat_export.json -y
+
+# Semantic extraction with Evidence Spans using Gemini, Claude, OpenAI, or local Ollama
+npx @trsthales/pactx extract transcript.jsonl --model gemini-2.5-flash --api-key $GEMINI_API_KEY
+npx @trsthales/pactx extract cursor_log.json --model claude-3-5-haiku
+npx @trsthales/pactx extract session.txt --model qwen2.5-coder # Ollama local
+
+# Inspect without modifying disk
+npx @trsthales/pactx extract chat.json --dry-run
 ```
 
 ---
 
-## The `pactx-update` Protocol Schema (v1.1)
+## 📊 Context Health & Telemetry (`pactx status --telemetry`)
 
-AIs emit the candidate update block wrapped in the `pactx-update` code fence:
+Monitor context window consumption and operational risk zones before amnesia occurs:
 
-````yaml
-```pactx-update
-version: "1.1"
-base_revision: "2a0de5"
-
-source:
-  type: "conversation" # conversation | agent | manual | document
-  model: "Gemini 1.5 Pro"
-  session_topic: "Implementação da autenticação por PIN"
-
-state:
-  active_task: "TASK-05 Login de Alunos via PIN"
-  status: "IN_PROGRESS" # IN_PROGRESS | BLOCKED | COMPLETED
-  recommended_model: "Medium" # Medium | High
-  completed_items:
-    - "Definição do fluxo de autenticação por PIN"
-  new_facts:
-    - "Rate limit de login por PIN restrito a 5 tentativas por minuto"
-  rejected_hypotheses:
-    - "O login de alunos NÃO deve exigir e-mail ou senha alfanumérica"
-  next_action: "Implementar validação no controller e aplicar rate limit"
-
-new_requirements:
-  - id: "auto" # automatically generates REQ-002
-    type: "functional" # functional | security | performance | compliance
-    title: "Student PIN Security Policy"
-    statement: "Alunos devem se autenticar através de PIN de 4 dígitos com rate limit restrito."
-
-new_decisions:
-  - id: "auto" # pactx automatically calculates next sequence (DEC-002)
-    title: "Autenticação de Alunos via PIN Numérico de 4 Dígitos"
-    reason: "Alunos do ensino fundamental possuem fricção com senhas complexas"
-    decision: "Utilizar Turma + PIN de 4 dígitos com hash seguro"
-    satisfies: ["REQ-002"]
-
-superseded_decisions:
-  - id: "DEC-001"
-    by: "auto" # or specific ID
-    reason: "Substituída pelo novo modelo de multi-tenancy"
-
-new_glossary_terms:
-  - term: "StudentPIN"
-    definition: "Código numérico de 4 dígitos atribuído ao aluno"
+```bash
+npx @trsthales/pactx status --telemetry
 ```
-````
+
+```text
+╔══════════════════════════════════════════════════════════════════════╗
+║              pactx Context Health Dashboard v0.4.0                  ║
+╠══════════════════════════════════════════════════════════════════════╣
+║ Session: session_2026-08-27_a3f2d1   Model: claude-3-5-sonnet       ║
+║ Turns: 24                            Anchors Logged: 5 captured      ║
+╠══════════════════════════════════════════════════════════════════════╣
+║ CONTEXT CONSUMPTION                                                  ║
+║   Total Estimated:        28,252 tokens   [ 14%]                    ║
+║   Safe Zone (70%):       140,000 tokens                             ║
+║                                                                     ║
+║   [████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 14%          ║
+║    ← SAFE                    CAUTION  WARNING   CRIT →              ║
+╠══════════════════════════════════════════════════════════════════════╣
+║ CONTEXT HEALTH: 86/100 🟢 SAFE                                       ║
+╚══════════════════════════════════════════════════════════════════════╝
+```
 
 ---
 
@@ -182,26 +200,26 @@ new_glossary_terms:
 ### Core Commands
 | Command / Flag | Description |
 |---|---|
-| `pactx` / `pactx pack` | Reads repository state, copies context pack to clipboard, and prints stats |
+| `pactx` / `pactx pack` | Reads repository state, copies context pack to clipboard, and initializes ephemeral session |
 | `pactx init` | Scaffolds the `.ai-context/` directory with templates |
 | `pactx status` | Displays visual executive cognitive memory dashboard and git runtime state |
+| `pactx status --telemetry` | Displays context health, token saturation bar, and micro-anchors metrics |
 | `pactx status --json` | Emits full structured status as machine-readable JSON |
 | `pactx diff` | Inspects and displays color-coded mutation plan without writing to disk |
-| `pactx diff --file <path>` | Inspects mutation plan from a specific file |
-| `pactx diff --stdin` | Inspects mutation plan piped from stdin |
 | `pactx rollback [hash]` | Graph-safe & WAL-protected rollback of latest transaction (LIFO) or specific hash |
-| `pactx rollback --force-cascade` | Automatically cascades rollback across all dependent subsequent transactions |
-| `pactx doctor` | Validates repository health against 8 integrity and consistency rules |
-| `pactx doctor --fix` | Automatically repairs stale locks, cleans orphan temps, and prunes expired records |
+| `pactx doctor` | Validates repository health against 8 integrity and consistency rules (`--fix` to auto-repair) |
+| `pactx serve --mcp` | Starts native MCP server over stdio transport for Cursor and Claude Desktop |
 
-### Ingestion Commands (`pactx update`)
+### Ingestion & Extraction Commands
 | Command / Flag | Description |
 |---|---|
 | `pactx update` | Reads clipboard, validates payload, displays full-text plan, and prompts for confirmation |
-| `pactx update -y`, `--yes` | Applies changes without interactive confirmation (strictly keeps all safety & schema validations) |
+| `pactx update --proposal <id>` | Inspects and applies a decoupled proposal generated by the MCP server |
+| `pactx update -y`, `--yes` | Applies changes without interactive confirmation (strictly keeps all safety validations) |
 | `pactx update --dry-run` | Simulates and displays the full mutation plan without writing to disk |
-| `pactx update --file <path>` | Reads the `pactx-update` block from a markdown or log file |
-| `pactx update --stdin` | Reads the block via pipe (`cat response.md \| pactx update --stdin`) |
+| `pactx extract [file]` | Extracts decisions, facts, and rejected hypotheses from chat transcripts |
+| `pactx extract --stdin` | Extracts from piped input (`cat chat.json \| pactx extract --stdin`) |
+| `pactx extract --model <name>` | Semantic extraction with LLM (Gemini, Claude, OpenAI, Ollama) and Evidence Spans |
 
 ---
 
@@ -210,7 +228,7 @@ new_glossary_terms:
 `pactx update` treats AI outputs as **untrusted candidate input**:
 
 1. **Write-Ahead Logging (WAL):** Multi-file writes are orchestrated through atomic WAL manifests (`PREPARED` -> `APPLYING` -> `COMMITTED` / `ROLLED_BACK`). Crashes automatically trigger boot auto-recovery.
-2. **Path Traversal Jail:** ADR and Requirement identifiers are strictly constrained to `/^(auto|DEC-\d{3,4}|REQ-\d{3,4})$/i`. File writes cannot escape `.ai-context/`.
+2. **Path Traversal Jail:** ADR and Requirement identifiers are strictly constrained to `/^(auto\|DEC-\d{3,4}\|REQ-\d{3,4})$/i`. File writes cannot escape `.ai-context/`.
 3. **Safe AST Serialization:** Zero naive string template interpolation for YAML. All frontmatter is safely generated via formal YAML dumpers.
 4. **Graph-Safe Dependency Rollbacks:** Rollbacks analyze downstream links (`satisfies`, `superseded_by`) and prevent inconsistent states.
 5. **Canonical Idempotency:** Payloads are hashed with SHA-256 into `.ai-context/.pactx/ledger.json`. Re-running the same clipboard results in a safe No-Op.
@@ -232,7 +250,8 @@ new_glossary_terms:
 └── .pactx/
     ├── ledger.json       # Audit ledger tracking applied SHA-256 update hashes
     ├── .pactx.lock       # Atomic concurrency lockfile
-    └── transactions/     # Write-Ahead Log (WAL) manifests (TX-<hash>.json)
+    ├── transactions/     # Write-Ahead Log (WAL) manifests (TX-<hash>.json)
+    └── sessions/         # Ephemeral telemetry, micro-anchors, and proposals (gitignored)
 ```
 
 ---
