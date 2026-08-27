@@ -19,15 +19,16 @@ test('sessionStore: startSession, getActiveSession e clearActiveSession operam c
     initProject(tmpDir);
     const contextDir = path.join(tmpDir, '.ai-context');
 
-    // 1. Diretório de sessões é criado sob demanda
+    // 1. Diretório de sessões não existe antes de startSession
     const sessionsDir = getSessionsDir(contextDir);
-    assert.strictEqual(fs.existsSync(sessionsDir), true);
+    assert.strictEqual(fs.existsSync(sessionsDir), false);
 
     // 2. Sem sessão ativa inicialmente
     assert.strictEqual(getActiveSession(contextDir), null);
 
-    // 3. Iniciar sessão
+    // 3. Iniciar sessão (cria o diretório sob demanda)
     const session = startSession(contextDir, 'abc123def456', 420, 'gemini-2.5-pro');
+    assert.strictEqual(fs.existsSync(sessionsDir), true);
     assert.strictEqual(typeof session.sessionId, 'string');
     assert.strictEqual(session.baseRevision, 'abc123def456');
     assert.strictEqual(session.packTokenEstimate, 420);
@@ -172,3 +173,52 @@ test('status: renderStatus com --telemetry em estado IDLE exibe mensagem informa
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('P2-04: getSessionsDir não cria diretório enquanto ensureSessionsDir garante a criação', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-sessions-dir-test-'));
+  try {
+    const contextDir = path.join(tmpDir, '.ai-context');
+    const { getSessionsDir, ensureSessionsDir } = require('../src/telemetry/sessionStore');
+
+    const expectedPath = path.join(contextDir, '.pactx', 'sessions');
+
+    // getSessionsDir é pura leitura de caminho
+    const dir = getSessionsDir(contextDir);
+    assert.strictEqual(dir, expectedPath);
+    assert.strictEqual(fs.existsSync(dir), false);
+
+    // ensureSessionsDir cria a pasta no disco
+    const ensured = ensureSessionsDir(contextDir);
+    assert.strictEqual(ensured, expectedPath);
+    assert.strictEqual(fs.existsSync(ensured), true);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('P1-03: Micro-Âncoras possuem limite de 16KB para evitar buffer overflow e DOS', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-anchor-16kb-test-'));
+  try {
+    initProject(tmpDir);
+    const contextDir = path.join(tmpDir, '.ai-context');
+    const { appendSessionAnchor, getSessionAnchors } = require('../src/telemetry/anchorScanner');
+
+    // Cria âncora gigante (>16KB)
+    const giantPayload = 'A'.repeat(20 * 1024);
+    appendSessionAnchor(contextDir, {
+      type: 'fact',
+      payload: giantPayload,
+      rawText: giantPayload,
+      source: 'ai_comment',
+      capturedAt: new Date().toISOString(),
+    });
+
+    const anchors = getSessionAnchors(contextDir);
+    assert.strictEqual(anchors.length, 1);
+    assert.match(anchors[0].payload, /\[TRUNCATED_EXCEEDED_16KB\]/);
+    assert.ok(Buffer.byteLength(JSON.stringify(anchors[0])) < 16 * 1024);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+

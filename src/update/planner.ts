@@ -60,7 +60,7 @@ export function getNextReqId(requirementsPath: string, allocatedIds: Set<string>
     return `REQ-${next.toString().padStart(3, '0')}`;
 }
 
-function assertInsideDirectory(parentDir: string, targetPath: string, entityName: string): void {
+export function assertInsideDirectory(parentDir: string, targetPath: string, entityName: string): void {
     const resolvedParent = path.resolve(parentDir);
     const resolvedTarget = path.resolve(targetPath);
     const relative = path.relative(resolvedParent, resolvedTarget);

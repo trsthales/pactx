@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-08-27
+
+### Security & Hardening
+- **[P1-01] Path Traversal Jail in Proposals**: Strict regex validation (`/^PROP-[A-F0-9]{8,64}$/i`) and `assertInsideDirectory` preventing traversal attacks on `proposalId`.
+- **[P1-02] Cryptographic Revalidation of Proposals**: Proposals recalculated and validated against `canonicalHash` prior to application.
+- **[P1-03 & P2-06] Micro-Anchor Limits & Types**: Imposed 16KB limit per micro-anchor payload and strict Zod typing in MCP schema.
+- **[P1-04] Network Safety & Timeouts**: Configured 60s timeout via `AbortSignal.timeout` (customizable via `PACTX_MODEL_TIMEOUT_MS`) across all native `fetch` model calls.
+- **[P1-05 & P1-06] Transcript Guard & Single-Pass Parse**: Imposed 10MB limit on transcript files and single-pass JSON parsing avoiding redundant deserialization.
+- **[P1-07 & P1-08] Evidence Spans Validation & Prompt Delimiters**: Enclosed transcripts in `<TRANSCRIPT_DATA>` boundary tags and sanitized hallucinated evidence spans.
+- **[P2-04] Storage Layer Separation**: Separated pure path getter `getSessionsDir()` from directory creator `ensureSessionsDir()`.
+
 ## [0.4.0] - 2026-08-27
 
 ### Added

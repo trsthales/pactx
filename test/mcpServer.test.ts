@@ -205,7 +205,7 @@ state:
   }
 });
 
-test('proposalsStore: utilitários de CRUD de propostas', () => {
+test('proposalsStore: utilitários de CRUD de propostas', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-proposals-crud-test-'));
   try {
     initProject(tmpDir);
@@ -214,9 +214,11 @@ test('proposalsStore: utilitários de CRUD de propostas', () => {
     assert.strictEqual(normalizeProposalId('a1b2c3d4'), 'PROP-A1B2C3D4');
     assert.strictEqual(normalizeProposalId('PROP-a1b2c3d4'), 'PROP-A1B2C3D4');
 
+    const { computeCanonicalHash } = await import('../src/update/parser');
+    const computedHash = computeCanonicalHash({});
     const proposalMock: any = {
       proposalId: 'PROP-A1B2C3D4',
-      canonicalHash: 'a1b2c3d4e5f6',
+      canonicalHash: computedHash,
       proposedAt: new Date().toISOString(),
       plan: { operations: {} },
       payload: {},
@@ -293,4 +295,78 @@ new_glossary_terms: []
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('P1-01: Path Traversal Jail em proposalId rejeita tentativas de escape', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-proposal-jail-test-'));
+  try {
+    initProject(tmpDir);
+    const contextDir = path.join(tmpDir, '.ai-context');
+
+    assert.throws(() => {
+      getProposal(contextDir, '../../../etc/passwd');
+    }, /Invalid proposal ID/);
+
+    assert.throws(() => {
+      removeProposal(contextDir, '../../../../evil');
+    }, /Invalid proposal ID/);
+
+    assert.throws(() => {
+      normalizeProposalId('PROP-INVALID-CHARS-!@#$');
+    }, /Invalid proposal ID/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('P1-02: Revalidação Criptográfica detecta adulteração de payload em disco', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-proposal-tamper-test-'));
+  try {
+    initProject(tmpDir);
+    const contextDir = path.join(tmpDir, '.ai-context');
+    const server: any = createPactxMcpServer(tmpDir);
+    const tools = server._registeredTools;
+    const proposeTool = tools['pactx_propose_mutation'];
+
+    const validPayload = `\`\`\`pactx-update
+version: "1.1"
+state:
+  active_task: "Initial Task"
+  status: "IN_PROGRESS"
+  recommended_model: "High"
+  completed_items: []
+  new_facts: []
+  rejected_hypotheses: []
+  next_action: "None"
+new_requirements: []
+new_decisions: []
+superseded_decisions: []
+new_glossary_terms: []
+\`\`\``;
+
+    const proposeRes = await proposeTool.handler({ payload: validPayload });
+    const match = proposeRes.content[0].text.match(/PROP-[A-F0-9]+/);
+    assert.ok(match);
+    const proposalId = match[0];
+
+    const proposalFilePath = path.join(contextDir, '.pactx', 'sessions', 'proposals', `${proposalId}.json`);
+    const savedRecord = JSON.parse(fs.readFileSync(proposalFilePath, 'utf-8'));
+
+    // Adulteração maliciosa do payload no arquivo JSON da proposta
+    savedRecord.payload.state.active_task = 'Tampered Malicious Task';
+    fs.writeFileSync(proposalFilePath, JSON.stringify(savedRecord, null, 2), 'utf-8');
+
+    // Ao tentar ler a proposta para aplicar, deve falhar no check de integridade criptográfica
+    assert.throws(() => {
+      getProposal(contextDir, proposalId);
+    }, /Proposal integrity check failed: payload does not match canonical hash/);
+
+    // Ferramenta pactx_apply_mutation também deve retornar erro
+    const applyRes = await tools['pactx_apply_mutation'].handler({ proposalId });
+    assert.strictEqual(applyRes.isError, true);
+    assert.match(applyRes.content[0].text, /Proposal integrity check failed/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 

@@ -264,3 +264,105 @@ test('extractCommand: validações de arquivo inexistente e trava TTY em --stdin
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('P1-04: Network Safety - timeout configurável trata TimeoutError graciosamente', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTimeout = process.env.PACTX_MODEL_TIMEOUT_MS;
+  process.env.PACTX_MODEL_TIMEOUT_MS = '50'; // 50ms timeout
+
+  const mockTranscript = {
+    source: 'raw' as const,
+    turns: [{ index: 0, role: 'user' as const, content: 'Hello' }],
+    rawText: 'Hello',
+  };
+  const mockDet = {
+    anchors: [],
+    candidateUpdate: {},
+    gitSignals: { modifiedFiles: [], recentCommits: [] },
+    inlineCodeAnnotations: [],
+    totalTurns: 1,
+    anchorsCount: 0,
+  };
+
+  try {
+    globalThis.fetch = async (url: any, opts: any) => {
+      // Simula fetch que lança TimeoutError via sinal
+      const err = new Error('The operation was aborted due to timeout');
+      err.name = 'TimeoutError';
+      throw err;
+    };
+
+    await assert.rejects(
+      async () => {
+        await extractWithModel(mockTranscript, mockDet, {
+          model: 'gemini-2.5-flash',
+          apiKey: 'AIzaSyTest',
+        });
+      },
+      /Model request timed out after 50ms/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTimeout) {
+      process.env.PACTX_MODEL_TIMEOUT_MS = originalTimeout;
+    } else {
+      delete process.env.PACTX_MODEL_TIMEOUT_MS;
+    }
+  }
+});
+
+test('P1-05: Transcript Safety - rejeita arquivos que excedem 10MB', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pactx-extract-10mb-test-'));
+  try {
+    initProject(tmpDir);
+    const largeFile = path.join(tmpDir, 'large_transcript.txt');
+
+    // Cria arquivo com mais de 10MB
+    const buffer = Buffer.alloc(10 * 1024 * 1024 + 1024, 'a');
+    fs.writeFileSync(largeFile, buffer);
+
+    await assert.rejects(
+      async () => {
+        await executeExtract(tmpDir, largeFile);
+      },
+      /Transcript file exceeds the maximum 10MB limit/
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('P1-07: Validação de Evidence Spans filtra turnos e citações alucinadas', async () => {
+  const { validateAndSanitizeEvidenceSpans } = await import('../src/extract/modelExtractor');
+
+  const transcript = {
+    source: 'claude' as const,
+    turns: [
+      { index: 0, role: 'user' as const, content: 'Devemos usar JWT ou Sessions?' },
+      { index: 1, role: 'assistant' as const, content: 'Não devemos usar JWT para sessões de alunos pois senhas são complexas.' },
+    ],
+    rawText: '',
+  };
+
+  const aiOutputWithHallucinatedTurn = `\`\`\`pactx-update
+version: "1.1"
+state:
+  new_facts:
+    - "Sessions são seguras (evidence: turn 1 - 'Não devemos usar JWT')"
+    - "Fato inventado (evidence: turn 99 - 'Alucinação')"
+  rejected_hypotheses:
+    - "JWT descartado (evidence: turn 1 - 'Texto inexistente no turno')"
+\`\`\``;
+
+  const sanitized = validateAndSanitizeEvidenceSpans(aiOutputWithHallucinatedTurn, transcript);
+
+  // Turn 1 com citação válida é mantido integralmente
+  assert.match(sanitized, /evidence: turn 1 - 'Não devemos usar JWT'/);
+
+  // Turn 99 (inexistente) é removido
+  assert.strictEqual(sanitized.includes('turn 99'), false);
+
+  // Turn 1 com citação inexistente é sanitizado para manter apenas o número do turno válido
+  assert.match(sanitized, /\(evidence: turn 1\)/);
+});
+
