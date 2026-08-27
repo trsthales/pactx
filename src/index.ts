@@ -22,3 +22,8 @@ export * from './extract/adapters/raw';
 export * from './extract/detector';
 export * from './extract/deterministic';
 export * from './extract/modelExtractor';
+export * from './mcp/types';
+export * from './mcp/proposals';
+export * from './mcp/resources';
+export * from './mcp/tools';
+export * from './mcp/server';
