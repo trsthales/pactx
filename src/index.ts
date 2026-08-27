@@ -8,3 +8,8 @@ export * from './commands/status';
 export * from './commands/diff';
 export * from './commands/rollback';
 export * from './commands/doctor';
+export * from './telemetry/types';
+export * from './telemetry/tokenEstimator';
+export * from './telemetry/contextHealth';
+export * from './telemetry/sessionStore';
+export * from './telemetry/anchorScanner';

@@ -41,3 +41,5 @@ Thumbs.db
 .ai-context-test/
 tmp/
 temp/
+# Sessões de telemetria efêmeras
+.ai-context/.pactx/sessions/

@@ -199,10 +199,11 @@ program
     .command('status')
     .description('Display status and cognitive memory metrics of the repository')
     .option('-j, --json', 'Output full metrics as structured JSON')
+    .option('--telemetry', 'Display context health and saturation telemetry')
     .action(async (options) => {
         try {
             const { renderStatus } = await import('./commands/status');
-            renderStatus(process.cwd(), { json: options.json });
+            renderStatus(process.cwd(), { json: options.json, telemetry: options.telemetry });
         } catch (err: any) {
             console.error(pc.red(`✖ Error: ${err.message}`));
             process.exit(1);

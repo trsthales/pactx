@@ -6,6 +6,10 @@ import { bootstrapPactx } from '../core/bootstrap';
 import { getGitState } from '../git';
 import { getCurrentContextRevision } from '../composer';
 import { HistoryLedger } from '../update/types';
+import { getActiveSession, ActiveSessionData } from '../telemetry/sessionStore';
+import { getSessionAnchors } from '../telemetry/anchorScanner';
+import { calculateContextHealth } from '../telemetry/contextHealth';
+import { ContextHealthReport, MicroAnchorEntry } from '../telemetry/types';
 
 export interface StatusData {
     project: {
@@ -56,6 +60,17 @@ export interface StatusData {
     };
 }
 
+export interface TelemetryStatusData {
+    session: ActiveSessionData | null;
+    healthReport: ContextHealthReport | null;
+    anchors: MicroAnchorEntry[];
+}
+
+export interface StatusOptions {
+    json?: boolean;
+    telemetry?: boolean;
+}
+
 function parseFrontmatter<T = any>(content: string): { data: T; body: string } {
     const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
     if (!match) {
@@ -67,6 +82,28 @@ function parseFrontmatter<T = any>(content: string): { data: T; body: string } {
     } catch {
         return { data: {} as T, body: match[2] };
     }
+}
+
+export function getTelemetryData(contextDir: string): TelemetryStatusData {
+    const session = getActiveSession(contextDir);
+    const anchors = getSessionAnchors(contextDir);
+    if (!session) {
+        return { session: null, healthReport: null, anchors: [] };
+    }
+
+    const sessionAgeMinutes = Math.max(0, Math.round((Date.now() - new Date(session.sessionStartedAt).getTime()) / 60000));
+    const estimatedTurns = Math.max(1, Math.round(sessionAgeMinutes / 3));
+    const avgTokensPerTurn = 800;
+    const totalEstimatedTokens = session.packTokenEstimate + (estimatedTurns * avgTokensPerTurn);
+
+    const healthReport = calculateContextHealth({
+        estimatedTokensUsed: totalEstimatedTokens,
+        modelName: session.modelName,
+        confidence: 'estimated',
+        turnsCount: estimatedTurns,
+    });
+
+    return { session, healthReport, anchors };
 }
 
 export function getStatusData(cwd: string = process.cwd()): StatusData {
@@ -242,8 +279,87 @@ export function getStatusData(cwd: string = process.cwd()): StatusData {
     };
 }
 
-export function renderStatus(cwd: string = process.cwd(), options: { json?: boolean } = {}): void {
+export function renderStatus(cwd: string = process.cwd(), options: StatusOptions = {}): void {
+    const { contextDir } = bootstrapPactx(cwd, { autoRecovery: false });
     const data = getStatusData(cwd);
+
+    if (options.telemetry) {
+        const telemetryData = getTelemetryData(contextDir);
+
+        if (options.json) {
+            console.log(JSON.stringify({ ...data, telemetry: telemetryData }, null, 2));
+            return;
+        }
+
+        console.log(pc.bold(pc.cyan(`\n📦 PactX Context Telemetry — ${data.project.name} (v${data.project.version})`)));
+        console.log(pc.dim('────────────────────────────────────────────────────────────────────────────'));
+
+        if (!telemetryData.session || !telemetryData.healthReport) {
+            console.log(pc.yellow('Status: IDLE / NO ACTIVE SESSION. Run \'pactx\' to generate a context pack and start a session.'));
+            console.log(pc.dim('────────────────────────────────────────────────────────────────────────────\n'));
+            return;
+        }
+
+        const { session, healthReport, anchors } = telemetryData;
+        const sessionAgeMinutes = Math.max(0, Math.round((Date.now() - new Date(session.sessionStartedAt).getTime()) / 60000));
+        const estimatedTurns = healthReport.consumption.turnsCount;
+
+        const decCount = anchors.filter(a => a.type === 'dec').length;
+        const rejCount = anchors.filter(a => a.type === 'rej').length;
+        const factCount = anchors.filter(a => a.type === 'fact').length;
+
+        const statusBadge = data.state.status === 'COMPLETED'
+            ? pc.green(`[${data.state.status}]`)
+            : data.state.status === 'BLOCKED'
+            ? pc.red(`[${data.state.status}]`)
+            : pc.cyan(`[${data.state.status}]`);
+
+        console.log(`${pc.bold('🎯 Active Task:')}     ${pc.white(data.state.activeTask)} ${statusBadge}`);
+        console.log(`${pc.bold('🤖 Model Profile:')}   ${pc.yellow(healthReport.model.name)} (${healthReport.model.maxTokens.toLocaleString()} tokens)`);
+        console.log(`${pc.bold('🔑 Context Rev:')}     ${pc.magenta(data.contextRevision)}`);
+
+        // ANSI Progress Bar (30 chars)
+        const saturation = healthReport.consumption.saturationPercent;
+        const filledCount = Math.min(30, Math.max(0, Math.round((saturation / 100) * 30)));
+        const unfilledCount = 30 - filledCount;
+        const filledBlock = '█'.repeat(filledCount);
+        const unfilledBlock = '░'.repeat(unfilledCount);
+
+        let coloredFilled = pc.green(filledBlock);
+        let gradeBadge = pc.green(`[${healthReport.health.grade}]`);
+        if (healthReport.health.grade === 'WATCH') {
+            coloredFilled = pc.cyan(filledBlock);
+            gradeBadge = pc.cyan(`[${healthReport.health.grade}]`);
+        } else if (healthReport.health.grade === 'CAUTION') {
+            coloredFilled = pc.yellow(filledBlock);
+            gradeBadge = pc.yellow(`[${healthReport.health.grade}]`);
+        } else if (healthReport.health.grade === 'WARNING') {
+            coloredFilled = pc.magenta(filledBlock);
+            gradeBadge = pc.magenta(`[${healthReport.health.grade}]`);
+        } else if (healthReport.health.grade === 'CRITICAL') {
+            coloredFilled = pc.red(filledBlock);
+            gradeBadge = pc.red(`[${healthReport.health.grade}]`);
+        }
+
+        const bar = `[${coloredFilled}${pc.dim(unfilledBlock)}]`;
+
+        console.log(pc.bold('\n📊 Session Metrics:'));
+        console.log(`   • Pack Initial:   ~${session.packTokenEstimate.toLocaleString()} tokens (ESTIMATED)`);
+        console.log(`   • Session Age:    ${sessionAgeMinutes} min (Est. ${estimatedTurns} turns)`);
+        console.log(`   • Tokens Used:    ~${healthReport.consumption.estimatedTokens.toLocaleString()} tokens [${saturation.toFixed(0)}% of window]`);
+        console.log(`   • Anchors Logged: ${anchors.length} captured (${decCount} DEC, ${rejCount} REJ, ${factCount} FACT)`);
+        console.log(`   • Context Health: ${healthReport.health.score}/100 ${gradeBadge}`);
+        console.log(`   • Confidence:     ${healthReport.health.confidence.toUpperCase()}`);
+
+        console.log(`\n   ──── Session Timeline ────────────────────────────────`);
+        console.log(`   ${bar} ${saturation.toFixed(0)}%`);
+        console.log(`   0%      ↑ here     70% ⚡ handoff   85% 💀 cliff   100%`);
+        console.log(`   ──────────────────────────────────────────────────────`);
+
+        console.log(`\n💡 Recommendation: ${pc.bold(healthReport.recommendation.message)}`);
+        console.log(pc.dim('────────────────────────────────────────────────────────────────────────────\n'));
+        return;
+    }
 
     if (options.json) {
         console.log(JSON.stringify(data, null, 2));
