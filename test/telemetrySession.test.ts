@@ -96,7 +96,10 @@ test('status: renderStatus com --telemetry exibe dashboard visual e barra de sat
     assert.match(output, /Session Metrics:/);
     assert.match(output, /Session Timeline/);
     assert.match(output, /Recommendation:/);
-    assert.match(output, /\[█*░*\]/); // Barra de progresso ANSI
+
+    const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*m/g, '');
+    const cleanOutput = stripAnsi(output);
+    assert.match(cleanOutput, /\[[█░]+\]/);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
